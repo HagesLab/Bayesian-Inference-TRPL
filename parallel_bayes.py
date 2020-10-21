@@ -29,22 +29,6 @@ def indexGrid(N, refs):                        # Arrays of cell coordinates
         pN  *= refs[k]                         # Update mutipliers
     return indexes
 
-def indexN(indexes, refs):                     # Arrays of cell indexes
-    ind = indexes.copy()                       # Copy of coordinates
-    K   = len(refs)                            # Num params
-    pN  = np.prod(refs, axis=0)                # Scale for indexes
-    N   = np.zeros(len(ind), int)              # Cell indexes
-    for k in range(K):                         # Loop over refinement levels
-        ref  = refs[K-k-1]                     # Loop backwards
-        pN //= ref                             # Update multipliers
-        pM   = 1                               # Initialize multiplier
-        for m in range(len(ref)):              # Loop over directions
-            Nm   = ind[:,m]//pN[m]             # Coordinate in level
-            N   += Nm*np.prod(pN)*pM           # Update N
-            ind[:, m] -= Nm*pN[m]              # Update local indexes
-            pM  *= ref[m]                      # Update multipliers
-    return N
-
 def paramGrid(ind, refs, minX, maxX):          # Arrays of parameters
     pN  = np.prod(refs, axis=0)                # Scale for indexes
     X   = minX + (maxX-minX)*(ind + 0.5)/pN    # Get params
@@ -69,45 +53,186 @@ def modelErr(F, ref):
         pN *= ref[m]                           # Update counter
     return np.array(err)
 
-def forwardSim(model, X, ref, data):
+def forwardSim(model, X, init_params, space_grid, ref, data):
     times, values, std = data                  # Unpack data tuple
     lnP = np.zeros(len(X))                     # Sum of log(likelihood)
-    unc = np.zeros(len(ref))
-    for n in range(len(times)):
-        F    = model(times[n], X)
+    # Generate one (the same) initial condition for each X
+    spacing = space_grid[1] - space_grid[0]
+    m = len(space_grid)
+    electron_dens = pulse_laser_maxgen(*(init_params), space_grid)
+    electron_dens = np.add.outer(electron_dens, np.zeros(len(X))).T
+    hole_dens = pulse_laser_maxgen(*(init_params), space_grid)
+    hole_dens = np.add.outer(hole_dens, np.zeros(len(X))).T
+    E_field = np.zeros((len(X), m + 1))
+    
+    electron_dens += X[:,1].reshape(len(X), 1)
+    hole_dens += X[:,2].reshape(len(X), 1)
+    # X: [B, n0, p0, Sf, Sb, mu_n, mu_p, tau_n, tau_p, T, eps]
+    
+    # Since simulate() needs info from two time steps at a time, we must employ the
+    # "first iteration different" design scheme of for loops
+    # Either we grab PL of the initial time step and have
+    # for n in range(1, len(times)):
+        # sim(times[n-1], times[n])
+        # PL()
+        
+    # Or we do
+    # for n in range(len(times) - 1):
+        # PL()
+        # sim(times[n], times[n+1])
+    # and grab a final PL after the loop
+    
+    # I chose the former, for no particular reason
+    F = PL(spacing, electron_dens, hole_dens, X[:,0], X[:,1], X[:,2])
+    sig  = modelErr(F, ref)
+    sg2  = 2*(sig.max()**2 + std[0]**2)
+    lnP -= (F-values[0])**2 / sg2 + np.log(np.pi*sg2)/2
+    
+    for n in range(1, len(times)):
+        #F    = model(times[n], X)
+        electron_dens, hole_dens, E_field = simulate_tstep(m, spacing, 0.001, times[n-1], times[n], X, 
+                                                           electron_dens, hole_dens, E_field)
+        
+        F = PL(spacing, electron_dens, hole_dens, X[:,0], X[:,1], X[:,2])
+        
         sig  = modelErr(F, ref)
-        unc  = np.fmax(unc, sig/F.max())       # Relative sigma for refinement
         sg2  = 2*(sig.max()**2 + std[n]**2)
         lnP -= (F-values[n])**2 / sg2 + np.log(np.pi*sg2)/2
-    return lnP, unc
+    return lnP
 
-def bayes(model, N, P, refs, minX, maxX, minP, data):        # Driver function
+def marginalP(N, P, refs):                                   # Marginal P's
+    pN   = np.prod(refs, axis=0)
+    ind  = indexGrid(N, refs)
+    marP = []
+    for m in range(len(refs[0])):                            # Loop over axes
+        Pm   = np.zeros(pN[m])
+        for n in np.unique(ind[:,m]):                        # Loop over coord
+            Pm[n] = P[np.where(ind[:,m] == n)].sum()         # Marginal P
+        marP.append(Pm)                                      # Add to list
+    return np.array(marP)
+
+def plotMarginalP(marP, pN, minX, maxX):                     # Plot marginal P
+    import matplotlib.pyplot as plt
+    plt.clf()
+    for m in np.where(pN > 1)[0]:                                 # Loop over axes
+        plt.figure(m)
+        im = np.array([*range(pN[m])]) + 0.5                 # Coords
+        X = minX[m] + (maxX[m]-minX[m])*im/pN[m]             # Param values
+        plt.plot(X, marP[m], label = str(m))
+        plt.xlim(minX[m], maxX[m])
+        plt.ylim(0,1)
+        plt.legend(loc='best')
+
+def bayes(model, N, P, refs, minX, maxX, init_params, space_grid, minP, data):        # Driver function
     for nref in range(len(refs)):                            # Loop refinements
-        N   = N[np.where(P > minP[nref])]                    # Del P < minP
+        N   = N[np.where(P > minP[nref])]                    # P < minP
         N   = refineGrid(N, refs[nref])                      # Refine grid
         Np  = np.prod(refs[nref])                            # Params per set
-        P   = np.zeros(len(N))                               # Likelihoods
-        unc = np.zeros(len(refs[0]))                         # Uncertainty
+        lnP = np.zeros(len(N))                               # Likelihoods
         print("ref level, N: ", nref, len(N))
         for n in range(0, len(N), Np):                       # Loop over blks
             Nn  = N[n:n+Np]                                  # Cells block
             ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
             X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
-            Pbk = forwardSim(model, X, refs[nref], data)     # P's for block
-            P[n:n+Np] = Pbk[0]
-            unc = np.maximum(unc, Pbk[1])
-            
-        min_lnP = np.amin(P)
-        max_lnP = np.amax(P)
-        P += (1022*np.log(2) - max_lnP)
-        P -= np.log(len(P))
-        P = np.exp(P)
+            Pbk = forwardSim(model, X, init_params, space_grid, refs[nref], data)     # P's for block
+            lnP[n:n+Np] = Pbk
+        P = np.exp(lnP + 1000*np.log(2) - np.log(len(lnP)) - np.max(lnP))
         P  /= np.sum(P)                                      # Normalize P's
-    return N, P, unc
+    return N, P
 
 
 #-----------------------------------------------------------------------------#
+import pandas as pd
+def get_data(filename):
+    # To replace testData
+    df = pd.read_hdf(filename)
+    t = np.array(df['time'])
+    PL = np.array(df['PL'])
+    uncertainty = np.array(df['uncertainty'])
+    return (t, PL, uncertainty)
 
+def pulse_laser_maxgen(max_gen, alpha, grid_x):
+    # Initial N, P
+    return (max_gen * np.exp(-alpha * grid_x))
+
+def simulate_tstep(m, dx, dt, start_t, target_t, X, init_N, init_P, init_E_field):
+    # X must have a strict order - for here that order is:
+    # Sf, Sb, B, mu_n, mu_p, tau_n, tau_p, n0, p0, T, eps
+    current_t = start_t
+    
+    ## Set initial condition
+    # init_N, init_P, init_E_field = [X][]
+    y = np.concatenate([init_N, init_P, init_E_field], axis=1)
+    # y = [X][], one N-P-E chain per X
+    # Time step until the simulation time matches the next experimental data time
+    # FIXME: What happens if the time step takes current_t beyond target_t?
+    while (current_t < target_t):
+        k1 = dydt(y, m, dx, *(X.T))
+        k2 = dydt(y + 0.5*dt*k1, m, dx, *(X.T))
+        k3 = dydt(y + 0.5*dt*k2, m, dx, *(X.T))
+        k4 = dydt(y + dt*k3, m, dx, *(X.T))
+
+        y = y + dt/6*(k1 + 2*k2 + 2*k3 + k4)
+        current_t += dt
+        
+    N = y[:,0:m]
+    P = y[:,m:2*m]
+    E_field = y[:,2*m:]
+    return N, P, E_field
+
+def dydt(y, m, dx, B, n0, p0, Sf, Sb, mu_n, mu_p, tauN, tauP, T, eps, recycle_photons=True, do_ss=False, alphaCof=0, thetaCof=0, delta_frac=1, fracEmitted=0, combined_weight=0, E_field_ext=0, dEcdz=0, dChidz=0, init_N=0, init_P=0):
+    num_sims = len(Sf)
+    Jn = np.zeros((num_sims, m+1))
+    Jp = np.zeros((num_sims, m+1))
+
+    dJz = np.zeros((num_sims, m))
+    rad_rec = np.zeros((num_sims, m))
+    non_rad_rec = np.zeros((num_sims, m))
+
+    N = y[:, 0:m]
+    P = y[:, m:2*(m)]
+    E_field = y[:, 2*(m):]
+    N_edges = (N[:,:-1] + np.roll(N, -1, axis=1)[:,:-1]) / 2 # Excluding the boundaries; see the following FIXME
+    P_edges = (P[:,:-1] + np.roll(P, -1, axis=1)[:,:-1]) / 2
+    
+    Sft = (N[:,0] * P[:,0] - n0 * p0) / ((N[:,0] / Sf) + (P[:,0] / Sf))
+    Sbt = (N[:,m-1] * P[:,m-1] - n0 * p0) / ((N[:,m-1] / Sb) + (P[:,m-1] / Sb))
+    Jn[:,0] = Sft
+    Jn[:,m] = -Sbt
+    Jp[:,0] = -Sft
+    Jp[:,m] = Sbt
+
+    # Params must be promoted to 2D to multiply with 2D N, P, E_field
+    Jn[:,1:-1] = (-mu_n.reshape(num_sims, 1) * (N_edges) * (q * (E_field[:,1:-1] + E_field_ext) + dChidz) + 
+                (mu_n.reshape(num_sims, 1) * kB * T.reshape(num_sims, 1)) * ((np.roll(N,-1, axis=1)[:,:-1] - N[:,:-1]) / (dx)))
+
+    Jp[:,1:-1] = (-mu_p.reshape(num_sims, 1) * (P_edges) * (q * (E_field[:,1:-1] + E_field_ext) + dChidz + dEcdz) -
+                (mu_p.reshape(num_sims, 1) * kB * T.reshape(num_sims, 1)) * ((np.roll(P, -1, axis=1)[:,:-1] - P[:,:-1]) / (dx)))
+        
+    dEdt = (Jn + Jp) * ((q_C) / (eps.reshape(num_sims, 1) * eps0))
+    
+    rad_rec = B.reshape(num_sims, 1) * (N * P - n0.reshape(num_sims, 1) * p0.reshape(num_sims, 1))
+    non_rad_rec = (N * P - n0.reshape(num_sims, 1) * p0.reshape(num_sims, 1)) / ((tauN.reshape(num_sims, 1) * P) + (tauP.reshape(num_sims, 1) * N))
+
+    dJz = (np.roll(Jn, -1, axis=1)[:,:-1] - Jn[:,:-1]) / (dx)
+
+    dNdt = ((1/q) * dJz - rad_rec - non_rad_rec)
+
+    dJz = (np.roll(Jp, -1, axis=1)[:, :-1] - Jp[:, :-1]) / (dx)
+
+    dPdt = ((1/q) * -dJz - rad_rec - non_rad_rec)
+
+    dydt = np.concatenate([dNdt, dPdt, dEdt], axis=1)
+    return dydt
+
+from scipy import integrate as intg
+def PL(dx, N, P, B, n0, p0):
+    # THis should build off the same strict order as simulate()
+    num_sims = len(B)
+    rad_rec = B.reshape(num_sims, 1) * (N * P - n0.reshape(num_sims, 1) * p0.reshape(num_sims, 1)) #[][]
+    PL = intg.trapz(rad_rec, dx=dx, axis=1) #[]
+    
+    return PL
 
 def testData(t, parms):
     f = np.zeros(len(t))
@@ -123,159 +248,48 @@ def testModel(t, parms):
     f *= parms[:,0]
     return f
 
-import pandas as pd
-def get_data(filename):
-    # To replace testData
-    df = pd.read_hdf(filename)
-    t = np.array(df['time'])
-    PL = np.array(df['PL'])
-    uncertainty = np.array(df['uncertainty'])
-    return (t, PL, uncertainty)
-
-def pulse_laser_maxgen(max_gen, alpha, x_array):
-    # Initial N, P
-    return (max_gen * np.exp(-alpha * x_array))
-
-def simulate_tstep(m, dx, dt, start_t, target_t, Sf, Sb, mu_n, mu_p, T, n0, p0, tauN, tauP, B, eps, init_N, init_P, init_E_field):
-    current_t = start_t
-    
-    ## Set initial condition
-    y = np.concatenate([init_N, init_P, init_E_field], axis=None)
-    
-    # Time step until the simulation time matches the next experimental data time
-    while (current_t < target_t):
-        k1 = dydt(y, m, dx, Sf, Sb, mu_n, mu_p, T, n0, p0, tauN, tauP, B, eps, eps0, q, q_C, kB)
-        k2 = dydt(y + 0.5*dt*k1, m, dx, Sf, Sb, mu_n, mu_p, T, n0, p0, tauN, tauP, B, eps, eps0, q, q_C, kB)
-        k3 = dydt(y + 0.5*dt*k2, m, dx, Sf, Sb, mu_n, mu_p, T, n0, p0, tauN, tauP, B, eps, eps0, q, q_C, kB)
-        k4 = dydt(y + dt*k3, m, dx, Sf, Sb, mu_n, mu_p, T, n0, p0, tauN, tauP, B, eps, eps0, q, q_C, kB)
-
-        y = y + dt/6*(k1 + 2*k2 + 2*k3 + k4)
-        current_t += dt
-        
-    N = y[0:m]
-    P = y[m:2*m]
-    E_field = y[2*m:]
-    return N, P, E_field
-
-def dydt(y, m, dx, Sf, Sb, mu_n, mu_p, T, n0, p0, tauN, tauP, B, eps, eps0, q, q_C, kB, recycle_photons=True, do_ss=False, alphaCof=0, thetaCof=0, delta_frac=1, fracEmitted=0, combined_weight=0, E_field_ext=0, dEcdz=0, dChidz=0, init_N=0, init_P=0):
-    ## Initialize arrays to store intermediate quantities that do not need to be iteratively solved
-    # These are calculated at node edges, of which there are m + 1
-    # dn/dx and dp/dx are also node edge values
-    Jn = np.zeros((m+1))
-    Jp = np.zeros((m+1))
-
-    # These are calculated at node centers, of which there are m
-    # dE/dt, dn/dt, and dp/dt are also node center values
-    dJz = np.zeros((m))
-    rad_rec = np.zeros((m))
-    non_rad_rec = np.zeros((m))
-
-    N = y[0:m]
-    P = y[m:2*(m)]
-    E_field = y[2*(m):]
-    N_edges = (N[:-1] + np.roll(N, -1)[:-1]) / 2 # Excluding the boundaries; see the following FIXME
-    P_edges = (P[:-1] + np.roll(P, -1)[:-1]) / 2
-    
-    ## Do boundary conditions of Jn, Jp
-    # FIXME: Calculate N, P at boundaries?
-    Sft = (N[0] * P[0] - n0 * p0) / ((N[0] / Sf) + (P[0] / Sf))
-    Sbt = (N[m-1] * P[m-1] - n0 * p0) / ((N[m-1] / Sb) + (P[m-1] / Sb))
-    Jn[0] = Sft
-    Jn[m] = -Sbt
-    Jp[0] = -Sft
-    Jp[m] = Sbt
-
-    ## Calculate Jn, Jp [nm^-2 ns^-1] over the space dimension, 
-    # Jn(t) ~ N(t) * E_field(t) + (dN/dt)
-    # np.roll(y,m) shifts the values of array y by m places, allowing for quick approximation of dy/dx ~ (y[m+1] - y[m-1] / 2*dx) over entire array y
-    Jn[1:-1] = (-mu_n * (N_edges) * (q * (E_field[1:-1] + E_field_ext) + dChidz) + 
-                (mu_n*kB*T) * ((np.roll(N,-1)[:-1] - N[:-1]) / (dx)))
-
-    ## Changed sign
-    Jp[1:-1] = (-mu_p * (P_edges) * (q * (E_field[1:-1] + E_field_ext) + dChidz + dEcdz) -
-                (mu_p*kB*T) * ((np.roll(P, -1)[:-1] - P[:-1]) / (dx)))
-        
-    # [V nm^-1 ns^-1]
-    dEdt = (Jn + Jp) * ((q_C) / (eps * eps0))
-    
-    ## Calculate recombination (consumption) terms
-    rad_rec = B * (N * P - n0 * p0)
-    non_rad_rec = (N * P - n0 * p0) / ((tauN * P) + (tauP * N))
-        
-    ## Calculate dJn/dx
-    dJz = (np.roll(Jn, -1)[:-1] - Jn[:-1]) / (dx)
-
-    ## N(t) = N(t-1) + dt * (dN/dt)
-    dNdt = ((1/q) * dJz - rad_rec - non_rad_rec)
-    #if do_ss: dNdt += init_N
-
-    ## Calculate dJp/dx
-    dJz = (np.roll(Jp, -1)[:-1] - Jp[:-1]) / (dx)
-
-    ## P(t) = P(t-1) + dt * (dP/dt)
-    dPdt = ((1/q) * -dJz - rad_rec - non_rad_rec)
-    #if do_ss: dPdt += init_P
-
-    ## Package results
-    dydt = np.concatenate([dNdt, dPdt, dEdt], axis=None)
-    return dydt
-
-from scipy import integrate as intg
-def propagatingPL(dx, N, P, B, n0, p0):
-    # Accept a 1D array - the radiative recombination over space at a given time
-    # and return the PL integrated over all space at that time
-    rad_rec = B * (N * P - n0 * p0)
-    PL = intg.trapz(rad_rec, dx=dx)
-    
-    return PL
-
 if __name__ == "__main__":
-    e = get_data("bayesim example expdata.h5")
-    ref1 = np.array([4,4,4])
-    ref2 = np.array([4,4,4])
-    ref3 = np.array([4,4,4])
-    refs = [ref1, ref2, ref3]                         # Refinements
-    minX = np.array([0, 0, 5])                        # Smallest param values
-    maxX = np.array([1, 2,15])                        # Largest param values
-    minP = np.array([0, 0.01, 0.05])                  # Threshold P
+    # This code follows a strict order of parameters:
+    # [B, n0, p0, Sf, Sb, mu_n, mu_p, tau_n, tau_p, T, eps]
+    unit_conversions = np.array([((1e7) ** 3) / (1e9), ((1e-7) ** 3), ((1e-7) ** 3), (1e7) / (1e9), (1e7) / (1e9), ((1e7) ** 2) / (1e9), ((1e7) ** 2) / (1e9), 1, 1, 1, 1])
+    
+    ref1 = np.array([4,1,1,4,1,1,1,1,1,1,1])
+    ref2 = np.array([2,1,1,2,1,1,1,1,1,1,1])
+    ref3 = np.array([4,1,1,4,1,1,1,1,1,1,1])
+    refs = [ref1, ref2]                         # Refinements
+    
+    minX = np.array([1e-11, 1e8, 1e15, 1e3, 1e-6, 10, 10, 20, 20, 300, 13.6])                        # Smallest param values
+    maxX = np.array([1e-9, 1e8, 1e15, 1e5, 1e-6, 10, 10, 20, 20, 300, 13.6])                        # Largest param values
+    
+    minX *= unit_conversions
+    maxX *= unit_conversions
+    
+    minP = np.array([0, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01])                  # Threshold P
+    # TODO: Check all max > min
+    # Check for valid values of minX
+    # Check all ref, minX, maxX, minP are same size as unit conversions
+    
+    # Create space grid
+    length = 1500.0
+    dx = 10.0
+    m = int(0.5 + length / dx)   # Number of space steps ("nodes")
+    space_grid = np.linspace(dx / 2,length - dx / 2, m)
+    init_params = (1e17 * ((1e-7) ** 3), 1e5 * 1e-7)
+    
     N    = np.array([0])                              # Initial N
     P    = np.array([1.0])                            # Initial P
     mP   = ()                                         # Forward model params
-    t = np.linspace(0, 5, 100+1)                      # Event tmies
-    data = testData(t, np.array([0.7, 1, 10]))        # Test data
-    N,P,U  = bayes(testModel, N, P, refs, minX, maxX, minP, data)
+    
+    data = get_data("1s bayesim example.h5")
+    #data = get_data("10s bayesim example.h5")
+    # data = get_data("100s bayesim example.h5")
+    
+    # t = np.linspace(0, 5, 100+1)                      # Event tmies
+    # data = testData(t, np.array([0.7, 1, 10]))        # Test data
+    N, P = bayes(testModel, N, P, refs, minX, maxX, init_params, space_grid, minP, data)
+    marP = marginalP(N, P, refs)
+    plotMarginalP(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1))
 
-    import matplotlib.pyplot as plt
-    plt.clf()
-    plt.plot(N,P)
-    
-    margins = True
-    
-    if margins:
-        max_P_index = indexGrid(N[np.where(P == np.amax(P))], refs)[0]
-        
-        for p in range(len(refs[-1])):
-            new = np.array([np.ones(max_P_index[p]) * max_P_index[i] if not i == p else np.arange(0, max_P_index[p]) for i in range(len(refs[-1]))], dtype=int).T
-            print(p, new)
-            cells = indexN(new, refs)
-            print(cells)
-            
-            diff = np.setdiff1d(cells, N)
-            if (len(diff)): 
-                print("Warning: some cell values not in original N list")
-                print(diff)
-            
-        
-        
-        # mprob_fig = plt.figure(figsize=(10,10))
-        # focused_mprob_fig = plt.figure(figsize=(10,10))
-        # cdim = np.ceil(np.sqrt(len(m_probs)))
-        # rdim = np.ceil(len(m_probs) / cdim)
-                
-        # mprob_fig.tight_layout()
-        
-    Nn  = N[np.where(P > 0.12)]
-    ind = indexGrid(Nn,refs)
-    X   = minX + ind*(maxX-minX)
-    print('Check indexN: ', indexN(ind, refs), Nn)
+
+
 
