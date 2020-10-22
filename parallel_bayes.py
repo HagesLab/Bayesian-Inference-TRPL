@@ -143,9 +143,8 @@ def bayes(model, N, P, refs, minX, maxX, init_params, space_grid, minP, data):  
 
 #-----------------------------------------------------------------------------#
 import pandas as pd
-def get_data(filename):
+def get_data(df):
     # To replace testData
-    df = pd.read_hdf(filename)
     t = np.array(df['time'])
     PL = np.array(df['PL'])
     uncertainty = np.array(df['uncertainty'])
@@ -250,24 +249,18 @@ def testModel(t, parms):
 
 if __name__ == "__main__":
     # This code follows a strict order of parameters:
-    # [B, n0, p0, Sf, Sb, mu_n, mu_p, tau_n, tau_p, T, eps]
+    param_names = ["B", "n0", "p0", "Sf", "Sb", "mu_n", "mu_p", "tau_n", "tau_p", "T", "eps"]
     unit_conversions = np.array([((1e7) ** 3) / (1e9), ((1e-7) ** 3), ((1e-7) ** 3), (1e7) / (1e9), (1e7) / (1e9), ((1e7) ** 2) / (1e9), ((1e7) ** 2) / (1e9), 1, 1, 1, 1])
     
     ref1 = np.array([4,1,1,4,1,1,1,1,1,1,1])
-    ref2 = np.array([2,1,1,2,1,1,1,1,1,1,1])
+    ref2 = np.array([4,1,1,4,1,1,1,1,1,1,1])
     ref3 = np.array([4,1,1,4,1,1,1,1,1,1,1])
-    refs = [ref1, ref2]                         # Refinements
+    refs = [ref1, ref1, ref1]                         # Refinements
     
     minX = np.array([1e-11, 1e8, 1e15, 1e3, 1e-6, 10, 10, 20, 20, 300, 13.6])                        # Smallest param values
     maxX = np.array([1e-9, 1e8, 1e15, 1e5, 1e-6, 10, 10, 20, 20, 300, 13.6])                        # Largest param values
     
-    minX *= unit_conversions
-    maxX *= unit_conversions
-    
     minP = np.array([0, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01])                  # Threshold P
-    # TODO: Check all max > min
-    # Check for valid values of minX
-    # Check all ref, minX, maxX, minP are same size as unit conversions
     
     # Create space grid
     length = 1500.0
@@ -280,12 +273,53 @@ if __name__ == "__main__":
     P    = np.array([1.0])                            # Initial P
     mP   = ()                                         # Forward model params
     
-    data = get_data("1s bayesim example.h5")
-    #data = get_data("10s bayesim example.h5")
-    # data = get_data("100s bayesim example.h5")
+    experimental_data_filename = "10s bayesim example.h5"
+    # experimental_data_filename = "10s bayesim example.h5"
+    # experimental_data_filename = "100s bayesim example.h5"
     
-    # t = np.linspace(0, 5, 100+1)                      # Event tmies
-    # data = testData(t, np.array([0.7, 1, 10]))        # Test data
+    # Pre-checks
+    from sys import exit
+    try:
+        num_params = len(param_names)
+        if not (len(unit_conversions) == num_params):
+            raise ValueError("Unit conversion array is missing entries")
+            
+        if not (len(minX) == num_params):
+            raise ValueError("Missing min param values")
+            
+        if not (len(maxX) == num_params):
+            raise ValueError("Missing max param values")  
+            
+        if any(minX <= 0):
+            raise ValueError("Invalid param values")
+            
+        if any(minX > maxX):
+            raise ValueError("Min params larger than max params")
+            
+        # TODO: Additional checks involving refs
+            
+        print("Starting simulations with the following parameters:")
+        for i in range(num_params):
+            if minX[i] == maxX[i]:
+                print("{}: {}".format(param_names[i], minX[i]))
+                
+            else:
+                print("{}: {} to {}".format(param_names[i], minX[i], maxX[i]))
+                
+        df = pd.read_hdf(experimental_data_filename)
+        print("\nExperimental data - {}".format(experimental_data_filename))
+        print(df)
+        _continue = input("Continue? (y/n)")
+        
+        if not (_continue == 'y'): raise KeyboardInterrupt("Aborted")
+        
+    except Exception as oops:
+        print(oops)
+        exit(0)
+        
+    minX *= unit_conversions
+    maxX *= unit_conversions
+    data = get_data(df)
     N, P = bayes(testModel, N, P, refs, minX, maxX, init_params, space_grid, minP, data)
     marP = marginalP(N, P, refs)
     plotMarginalP(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1))
