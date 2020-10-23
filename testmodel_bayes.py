@@ -21,7 +21,7 @@ def indexGrid(N, refs):                        # Arrays of cell coordinates
             ind.append(cN%ref[m])              # Index for this direction
             cN //= ref[m]                      # Divide out fom N
         indexes += np.array(ind).T*pN          # Accumulate indexes from level
-        pN  *= refs[k]                         # Update mutipliers
+        pN  *= ref                         # Update mutipliers
     return indexes
 
 def paramGrid(ind, refs, minX, maxX):          # Arrays of parameters
@@ -116,10 +116,11 @@ def testModel(t, parms):
     return f
 
 if __name__ == "__main__":
-    ref1 = np.array([3,3,1])
-    ref2 = np.array([3,3,1])
-    ref3 = np.array([3,3,1])
-    refs = [ref1, ref2, ref3]                         # Refinements
+    ref1 = np.array([4,4,1])
+    ref2 = np.array([2,2,1])
+    ref3 = np.array([4,1,1])
+                
+    refs = [ref1, ref2]                         # Refinements
     minX = np.array([0, 0, 10])                        # Smallest param values
     maxX = np.array([1, 1, 10])                        # Largest param values
     minP = np.array([0, 0.01, 0.01])                  # Threshold P
@@ -131,7 +132,6 @@ if __name__ == "__main__":
     N, P = bayes(testModel, N, P, refs, minX, maxX, minP, data)
     marP = marginalP(N, P, refs)
     plotMarginalP(marP, np.prod(refs,axis=0), minX, maxX)
-
 
 
 

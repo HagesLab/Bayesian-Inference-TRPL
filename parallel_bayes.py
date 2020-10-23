@@ -26,7 +26,7 @@ def indexGrid(N, refs):                        # Arrays of cell coordinates
             ind.append(cN%ref[m])              # Index for this direction
             cN //= ref[m]                      # Divide out fom N
         indexes += np.array(ind).T*pN          # Accumulate indexes from level
-        pN  *= refs[k]                         # Update mutipliers
+        pN  *= ref                         # Update mutipliers
     return indexes
 
 def paramGrid(ind, refs, minX, maxX):          # Arrays of parameters
@@ -69,7 +69,7 @@ def forwardSim(model, X, init_params, space_grid, ref, data):
     hole_dens += X[:,2].reshape(len(X), 1)
     # X: [B, n0, p0, Sf, Sb, mu_n, mu_p, tau_n, tau_p, T, eps]
     
-    # Since simulate() needs info from two time steps at a time, we must employ the
+    # Since simulate() needs info from two time steps at a time, here comes the
     # "first iteration different" design scheme of for loops
     # Either we grab PL of the initial time step and have
     # for n in range(1, len(times)):
@@ -114,7 +114,7 @@ def marginalP(N, P, refs):                                   # Marginal P's
 def plotMarginalP(marP, pN, minX, maxX):                     # Plot marginal P
     import matplotlib.pyplot as plt
     plt.clf()
-    for m in np.where(pN > 1)[0]:                                 # Loop over axes
+    for m in np.where(pN > 1)[0]:                            # Loop over axes
         plt.figure(m)
         im = np.array([*range(pN[m])]) + 0.5                 # Coords
         X = minX[m] + (maxX[m]-minX[m])*im/pN[m]             # Param values
@@ -155,8 +155,9 @@ def pulse_laser_maxgen(max_gen, alpha, grid_x):
     return (max_gen * np.exp(-alpha * grid_x))
 
 def simulate_tstep(m, dx, dt, start_t, target_t, X, init_N, init_P, init_E_field):
+    # The job of simulate() is to take the N, P, and E-field at the current time and advance them to the next required time
     # X must have a strict order - for here that order is:
-    # Sf, Sb, B, mu_n, mu_p, tau_n, tau_p, n0, p0, T, eps
+    # [B, n0, p0, Sf, Sb, mu_n, mu_p, tau_n, tau_p, T, eps]
     current_t = start_t
     
     ## Set initial condition
@@ -260,7 +261,7 @@ if __name__ == "__main__":
     minX = np.array([1e-11, 1e8, 1e15, 1e3, 1e-6, 10, 10, 20, 20, 300, 13.6])                        # Smallest param values
     maxX = np.array([1e-9, 1e8, 1e15, 1e5, 1e-6, 10, 10, 20, 20, 300, 13.6])                        # Largest param values
     
-    minP = np.array([0, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01])                  # Threshold P
+    minP = np.array([0, 0.01, 0.01])                 # Threshold P
     
     # Create space grid
     length = 1500.0
@@ -273,7 +274,7 @@ if __name__ == "__main__":
     P    = np.array([1.0])                            # Initial P
     mP   = ()                                         # Forward model params
     
-    experimental_data_filename = "10s bayesim example.h5"
+    experimental_data_filename = "1s bayesim example.h5"
     # experimental_data_filename = "10s bayesim example.h5"
     # experimental_data_filename = "100s bayesim example.h5"
     
