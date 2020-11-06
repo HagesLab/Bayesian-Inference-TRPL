@@ -15,25 +15,13 @@ q = 1.0 # [e]
 q_C = 1.602e-19 # [C]
 kB = 8.61773e-5  # [eV / K]
 def pulse_laser_maxgen(max_gen, alpha, x_array):
-    """
-
-    Parameters
-    ----------
-    max_gen : [nm^-3]
-        Exponential prefactor; value at x=0
-    alpha : [nm^-1]
-        Exponential decay factor
-    x_array : np.ndarray of positional nodes
-        
-
-    Returns
-    -------
-    np.ndarray
-        Initial delta_N, delta_P profile
-        Amt of excited charge carriers over the standard level
-
-    """
     return (max_gen * np.exp(-alpha * x_array))
+
+def rr(rate, n, p, n0, p0):
+    return rate * (n * p - n0 * p0)
+
+def nrr(n, p, n0, p0, tau_N, tau_P):
+    return (n * p - n0 * p0) / ((tau_N * p) + (tau_P * n))
 
 def time_step(current_N, current_P, current_E_field, prev_N, prev_P, prev_E_field, lamb, D_N, D_P, n0, p0, rr_rate, tau_N, tau_P, sf, sb, alpha_0, alpha_1, alpha_2):
     # Do 1st TS using 1st order backward
@@ -45,43 +33,31 @@ def time_step(current_N, current_P, current_E_field, prev_N, prev_P, prev_E_fiel
     while(True):
     
         # N, P block
-        mat_A_N = np.zeros((m, m))
-        mat_A_P = np.zeros((m, m))
-        
-        mat_A_N[0,0] = alpha_0 + D_N * (-1/2 * new_E_field[1] + 1)
-        mat_A_P[0,0] = alpha_0 + D_P * (1/2 * new_E_field[1] + 1)
+        mat_A_N = np.zeros((3,m))
+        mat_A_P = np.zeros((3,m))
+        mat_A_N[1,0] = alpha_0 + D_N * (-1/2 * new_E_field[1] + 1)
+        mat_A_P[1,0] = alpha_0 + D_P * (1/2 * new_E_field[1] + 1)
         mat_A_N[0,1] = D_N * (-1/2 * new_E_field[1] - 1)
         mat_A_P[0,1] = D_P * (1/2 * new_E_field[1] - 1)
         
-        mat_A_N[m-1,m-1] = alpha_0 + D_N * (1/2 * new_E_field[m-1] + 1)
-        mat_A_P[m-1,m-1] = alpha_0 + D_P * (-1/2 * new_E_field[m-1] + 1)
-        mat_A_N[m-1,m-2] = D_N * (1/2 * new_E_field[m-1] - 1)
-        mat_A_P[m-1,m-2] = D_P * (-1/2* new_E_field[m-1] - 1)
+        mat_A_N[1,-1] = alpha_0 + D_N * (1/2 * new_E_field[m-1] + 1)
+        mat_A_P[1,-1] = alpha_0 + D_P * (-1/2 * new_E_field[m-1] + 1)
+        mat_A_N[2,-2] = D_N * (1/2 * new_E_field[m-1] - 1)
+        mat_A_P[2,-2] = D_P * (-1/2* new_E_field[m-1] - 1)
         
-        # for i in range(1, m-1):
-        #     mat_A_N[i,i-1] = D_N * (1/2 * new_E_field[i] - 1)
-        #     mat_A_P[i,i-1] = D_P * (-1/2 * new_E_field[i] - 1)
-            
-        #     mat_A_N[i,i] = alpha_0 + D_N * (-1/2 * (new_E_field[i+1] - new_E_field[i]) + 2)
-        #     mat_A_P[i,i] = alpha_0 + D_P * (1/2 * (new_E_field[i+1] - new_E_field[i]) + 2)
-            
-        #     mat_A_N[i,i+1] = D_N * (-1/2 * new_E_field[i+1] - 1)
-        #     mat_A_P[i,i+1] = D_P * (1/2* new_E_field[i+1] - 1)
-            
-        mat_A_N[1:-1,0:-2] += np.diag(D_N * (1/2* new_E_field[1:-2] - 1), 0)
-        mat_A_P[1:-1,0:-2] += np.diag(D_P * (-1/2 * new_E_field[1:-2] - 1), 0)
+        mat_A_N[2,0:-2] = D_N * (1/2* new_E_field[1:-2] - 1)
+        mat_A_P[2,0:-2] = D_P * (-1/2 * new_E_field[1:-2] - 1)
         
-        mat_A_N[1:-1,1:-1] += np.diag(alpha_0 + D_N * (-1/2 * (np.roll(new_E_field, -1)[1:-2] - new_E_field[1:-2]) + 2), 0)
-        mat_A_P[1:-1,1:-1] += np.diag(alpha_0 + D_P * (1/2 * (np.roll(new_E_field, -1)[1:-2] - new_E_field[1:-2]) + 2), 0)
+        mat_A_N[1,1:-1] = alpha_0 + D_N * (-1/2 * (np.roll(new_E_field, -1)[1:-2] - new_E_field[1:-2]) + 2)
+        mat_A_P[1,1:-1] = alpha_0 + D_P * (1/2 * (np.roll(new_E_field, -1)[1:-2] - new_E_field[1:-2]) + 2)
         
-        mat_A_N[1:-1,2:] += np.diag(D_N * (-1/2 * np.roll(new_E_field, -1)[1:-2] - 1), 0)
-        mat_A_P[1:-1,2:] += np.diag(D_P * (1/2 * np.roll(new_E_field, -1)[1:-2] - 1), 0)
+        mat_A_N[0,2:] = D_N * (-1/2 * np.roll(new_E_field, -1)[1:-2] - 1)
+        mat_A_P[0,2:] = D_P * (1/2 * np.roll(new_E_field, -1)[1:-2] - 1)
         
-        rr = -rr_rate * (new_N * new_P - n0 * p0)
-        nrr = -(new_N * new_P - n0 * p0) / ((tau_N * new_P) + (tau_P * new_N))
+        consumption = rr(rr_rate, new_N, new_P, n0, p0) + nrr(new_N,new_P,n0,p0,tau_N,tau_P)
         
-        vec_B_N = (alpha_1 * current_N + alpha_2 * prev_N) + (rr + nrr)
-        vec_B_P = (alpha_1 * current_P + alpha_2 * prev_P) + (rr + nrr)
+        vec_B_N = (alpha_1 * current_N + alpha_2 * prev_N) - consumption
+        vec_B_P = (alpha_1 * current_P + alpha_2 * prev_P) - consumption
             
         # Boundary consumption terms lag one iteration behind
         f_0 = -sf * (new_N[0] * new_P[0] - n0 * p0) / (new_N[0] + new_P[0])
@@ -92,11 +68,10 @@ def time_step(current_N, current_P, current_E_field, prev_N, prev_P, prev_E_fiel
         vec_B_P[0] += f_0
         vec_B_P[m-1] += f_L
         
-        new_N = linalg.solve(mat_A_N, vec_B_N)
-        new_P = linalg.solve(mat_A_P, vec_B_P)
+        new_N = linalg.solve_banded((1,1), mat_A_N, vec_B_N)
+        new_P = linalg.solve_banded((1,1), mat_A_P, vec_B_P)
         
         # E block
-
         new_E_field[0] = alpha_1 * current_E_field[0] + alpha_2 * prev_E_field[0]
         new_E_field[m] = alpha_1 * current_E_field[m] + alpha_2 * prev_E_field[m]
         
@@ -146,15 +121,15 @@ if __name__ == "__main__":
     n = int(0.5 + final_t / dt)
     
     # Node centers placed at x=dx/2 and x=length-dx/2
-    N = np.zeros((m, n+1)) 
-    P = np.zeros((m, n+1))  
-    E_field = np.zeros((m+1, n+1))
+    N = np.zeros((m, 3)) 
+    P = np.zeros((m, 3))  
+    E_field = np.zeros((m+1, 3))
     
     grid_node_x = np.linspace(dx/2,length - dx/2, m)
     # IC at t=0
     N[:, 0] = pulse_laser_maxgen(1e17 * ((1e-7) ** 3), 1e5 * 1e-7, grid_node_x) + n0
     P[:, 0] = pulse_laser_maxgen(1e17 * ((1e-7) ** 3), 1e5 * 1e-7, grid_node_x) + p0
-    
+
     # Non dimensionalize
     n0 *= dx ** 3
     p0 *= dx ** 3
@@ -177,20 +152,29 @@ if __name__ == "__main__":
     params = (lamb, D_N, D_P, n0, p0, rr_rate, tau_N, tau_P, sf, sb)
     alphas = (1, 1, 0)
     alphas_2nd = (1.5, 2, -0.5)
+    
+    plot_N = N[:,0].copy().reshape((m, 1))
+    plot_P = P[:,0].copy().reshape((m, 1))
+    
     N[:,1], P[:,1], E_field[:,1] = time_step(N[:,0], P[:,0], E_field[:,0], N[:,-1], P[:,-1], E_field[:,-1], *params, *alphas)
-
+    
     for k in range(2, n+1):
-        N[:,k], P[:,k], E_field[:,k] = time_step(N[:,k-1], P[:,k-1], E_field[:,k-1], N[:,k-2], P[:,k-2], E_field[:,k-2], *params, *alphas_2nd)
-        
+        # Circular loop over current and two prev timesteps
+        i = k % 3
+        N[:, i], P[:,i], E_field[:, i] = time_step(N[:,i-1], P[:,i-1], E_field[:,i-1], N[:,i-2], P[:,i-2], E_field[:,i-2], *params, *alphas_2nd)
+    
+        if not (k % (n/5)):
+            plot_N = np.concatenate((plot_N, N[:,i].reshape((m,1))), axis=1)
+            plot_P = np.concatenate((plot_P, P[:,i].reshape((m,1))), axis=1)
     print("Took {} sec".format(time.time() - startTime))
     #plot the graph
 
     plt.figure(0)
     plt.yscale('log')
-    plt.plot(grid_node_x, N[:,0], label="time: 0.0")
-    plt.plot(grid_node_x, N[:,int(final_t*0.1/ dt)], label="time: 0.1")
-    plt.plot(grid_node_x, N[:,int(final_t*0.2/ dt)], label="time: 0.2")
-    plt.plot(grid_node_x, N[:,int(final_t*0.5/ dt)], label="time: 0.5")
+    t_frac=0
+    for N in plot_N.T:
+        plt.plot(grid_node_x, N, label="time: {:.2f}".format(t_frac * final_t))
+        t_frac += 0.2
     plt.xlabel('x [nm]', fontsize = 15)
     plt.ylabel('N* [unitless]', fontsize = 15)
     plt.title('electrons')
@@ -198,10 +182,10 @@ if __name__ == "__main__":
     
     plt.figure(1)
     plt.yscale('log')
-    plt.plot(grid_node_x, P[:,0], label="time: 0.0")
-    plt.plot(grid_node_x, P[:,int(final_t*0.1/ dt)], label="time: 0.1")
-    plt.plot(grid_node_x, P[:,int(final_t*0.2/ dt)], label="time: 0.2")
-    plt.plot(grid_node_x, P[:,int(final_t*0.5/ dt)], label="time: 0.5")
+    t_frac=0
+    for P in plot_P.T:
+        plt.plot(grid_node_x, P, label="time: {:.2f}".format(t_frac * final_t))
+        t_frac += 0.2
     plt.xlabel('x [nm]', fontsize = 15)
     plt.ylabel('P* [unitless]', fontsize = 15)
     plt.title('holes')
