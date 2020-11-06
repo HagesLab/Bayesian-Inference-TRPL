@@ -11,8 +11,8 @@ from scipy import linalg
 import time
 
 eps0 = 8.854 * 1e-12 * 1e-9 # [C / V m] to {C / V nm}
-q = -1.0 # [e]
-q_C = -1.602e-19 # [C]
+q = 1.0 # [e]
+q_C = 1.602e-19 # [C]
 kB = 8.61773e-5  # [eV / K]
 def pulse_laser_maxgen(max_gen, alpha, x_array):
     """
@@ -49,34 +49,34 @@ def time_step(current_N, current_P, current_E_field, prev_N, prev_P, prev_E_fiel
         mat_A_N = np.zeros((m, m))
         mat_A_P = np.zeros((m, m))
         
-        mat_A_N[0,0] = alpha_0 * (dx / dt) + D_N * (-q / (2*kB*T) * (new_E_field[1]) - (1/dx))
-        mat_A_P[0,0] = alpha_0 * (dx / dt) + D_P * (q / (2*kB*T) * (new_E_field[1]) - (1/dx))
-        mat_A_N[0,1] = D_N * (-q / (2*kB*T) * new_E_field[1] + (1/dx))
-        mat_A_P[0,1] = D_P * (q / (2*kB*T) * new_E_field[1] + (1/dx))
+        mat_A_N[0,0] = alpha_0 * (dx / dt) + D_N * (-q / (2*kB*T) * (new_E_field[1]) + (1/dx))
+        mat_A_P[0,0] = alpha_0 * (dx / dt) + D_P * (q / (2*kB*T) * (new_E_field[1]) + (1/dx))
+        mat_A_N[0,1] = D_N * (-q / (2*kB*T) * new_E_field[1] - (1/dx))
+        mat_A_P[0,1] = D_P * (q / (2*kB*T) * new_E_field[1] - (1/dx))
         
-        mat_A_N[m-1,m-1] = alpha_0 * (dx / dt) - D_N * (-q / (2*kB*T) * (new_E_field[m-1]) + (1/dx))
-        mat_A_P[m-1,m-1] = alpha_0 * (dx / dt) - D_P * (q / (2*kB*T) * (new_E_field[m-1]) + (1/dx))
-        mat_A_N[m-1,m-2] = -D_N * (-q / (2*kB*T) * new_E_field[m-1] - (1/dx))
-        mat_A_P[m-1,m-2] = -D_P * (q / (2*kB*T) * new_E_field[m-1] - (1/dx))
+        mat_A_N[m-1,m-1] = alpha_0 * (dx / dt) - D_N * (-q / (2*kB*T) * (new_E_field[m-1]) - (1/dx))
+        mat_A_P[m-1,m-1] = alpha_0 * (dx / dt) - D_P * (q / (2*kB*T) * (new_E_field[m-1]) - (1/dx))
+        mat_A_N[m-1,m-2] = -D_N * (-q / (2*kB*T) * new_E_field[m-1] + (1/dx))
+        mat_A_P[m-1,m-2] = -D_P * (q / (2*kB*T) * new_E_field[m-1] + (1/dx))
         
         # for i in range(1, m-1):
-        #     mat_A_N[i,i-1] = -D_N * (-q / (2*kB*T) * new_E_field[i] - (1/dx))
-        #     mat_A_P[i,i-1] = -D_P * (q / (2*kB*T) * new_E_field[i] - (1/dx))
+        #     mat_A_N[i,i-1] = -D_N * (-q / (2*kB*T) * new_E_field[i] + (1/dx))
+        #     mat_A_P[i,i-1] = -D_P * (q / (2*kB*T) * new_E_field[i] + (1/dx))
             
-        #     mat_A_N[i,i] = (dx / dt) + D_N * (-q / (2*kB*T) * (new_E_field[i+1] - new_E_field[i]) - (2/dx))
-        #     mat_A_P[i,i] = (dx / dt) + D_P * (q / (2*kB*T) * (new_E_field[i+1] - new_E_field[i]) - (2/dx))
+        #     mat_A_N[i,i] = (dx / dt) + D_N * (-q / (2*kB*T) * (new_E_field[i+1] - new_E_field[i]) + (2/dx))
+        #     mat_A_P[i,i] = (dx / dt) + D_P * (q / (2*kB*T) * (new_E_field[i+1] - new_E_field[i]) + (2/dx))
             
-        #     mat_A_N[i,i+1] = D_N * (-q / (2*kB*T) * new_E_field[i+1] + (1/dx))
-        #     mat_A_P[i,i+1] = D_P * (q / (2*kB*T) * new_E_field[i+1] + (1/dx))
+        #     mat_A_N[i,i+1] = D_N * (-q / (2*kB*T) * new_E_field[i+1] - (1/dx))
+        #     mat_A_P[i,i+1] = D_P * (q / (2*kB*T) * new_E_field[i+1] - (1/dx))
             
-        mat_A_N[1:-1,0:-2] += np.diag(-D_N * (-q / (2*kB*T) * new_E_field[1:-2] - (1/dx)), 0)
-        mat_A_P[1:-1,0:-2] += np.diag(-D_P * (q / (2*kB*T) * new_E_field[1:-2] - (1/dx)), 0)
+        mat_A_N[1:-1,0:-2] += np.diag(-D_N * (-q / (2*kB*T) * new_E_field[1:-2] + (1/dx)), 0)
+        mat_A_P[1:-1,0:-2] += np.diag(-D_P * (+q / (2*kB*T) * new_E_field[1:-2] + (1/dx)), 0)
         
-        mat_A_N[1:-1,1:-1] += np.diag(alpha_0 * (dx / dt) + D_N * (-q / (2*kB*T) * (np.roll(new_E_field, -1)[1:-2] - new_E_field[1:-2]) - (2/dx)), 0)
-        mat_A_P[1:-1,1:-1] += np.diag(alpha_0 * (dx / dt) + D_P * (q / (2*kB*T) * (np.roll(new_E_field, -1)[1:-2] - new_E_field[1:-2]) - (2/dx)), 0)
+        mat_A_N[1:-1,1:-1] += np.diag(alpha_0 * (dx / dt) + D_N * (-q / (2*kB*T) * (np.roll(new_E_field, -1)[1:-2] - new_E_field[1:-2]) + (2/dx)), 0)
+        mat_A_P[1:-1,1:-1] += np.diag(alpha_0 * (dx / dt) + D_P * (q / (2*kB*T) * (np.roll(new_E_field, -1)[1:-2] - new_E_field[1:-2]) + (2/dx)), 0)
         
-        mat_A_N[1:-1,2:] += np.diag(D_N * (-q / (2*kB*T) * np.roll(new_E_field, -1)[1:-2] + (1/dx)))
-        mat_A_P[1:-1,2:] += np.diag(D_P * (q / (2*kB*T) * np.roll(new_E_field, -1)[1:-2] + (1/dx)))
+        mat_A_N[1:-1,2:] += np.diag(D_N * (-q / (2*kB*T) * np.roll(new_E_field, -1)[1:-2] - (1/dx)))
+        mat_A_P[1:-1,2:] += np.diag(D_P * (q / (2*kB*T) * np.roll(new_E_field, -1)[1:-2] - (1/dx)))
         
         rr = -rr_rate * (new_N * new_P - n0 * p0)
         nrr = -(new_N * new_P - n0 * p0) / ((tau_N * new_P) + (tau_P * new_N))
@@ -104,12 +104,12 @@ def time_step(current_N, current_P, current_E_field, prev_N, prev_P, prev_E_fiel
         # for i in range(1,m):
         #     b = E_field[i,k-1] + (q_C * dt / eps) * (D_P/dx * (new_P[i] - new_P[i-1]) - D_N/dx * (new_N[i] - new_N[i-1]))
             
-        #     A = 1 - (q_C * dt / eps) * (D_P * (q / (2*kB*T)) * (new_P[i] + new_P[i-1]) + D_N * (q / (2*kB*T)) * (new_N[i] + new_N[i-1]))
+        #     A = 1 - (q_C * dt / eps) * (D_P * (-q / (2*kB*T)) * (new_P[i] + new_P[i-1]) + D_N * (-q / (2*kB*T)) * (new_N[i] + new_N[i-1]))
         #     new_E_field[i] = (A ** -1) * b
             
         b2 = alpha_1 * current_E_field[1:-1] + alpha_2 * prev_E_field[1:-1] + (q_C * dt / eps) * (D_P/dx * (new_P[1:] - np.roll(new_P, 1)[1:]) - D_N/dx * (new_N[1:] - np.roll(new_N, 1)[1:]))
             
-        A2 = alpha_0 - (q_C * dt / eps) * (D_P * (q / (2*kB*T)) * (new_P[1:] + np.roll(new_P, 1)[1:]) + D_N * (q / (2*kB*T)) * (new_N[1:] + np.roll(new_N, 1)[1:]))
+        A2 = alpha_0 + (q_C * dt / eps) * (D_P * (q / (2*kB*T)) * (new_P[1:] + np.roll(new_P, 1)[1:]) + D_N * (q / (2*kB*T)) * (new_N[1:] + np.roll(new_N, 1)[1:]))
         new_E_field[1:-1] = (A2 ** -1) * b2
             
         iter_ += 1
@@ -155,8 +155,21 @@ if __name__ == "__main__":
     # IC at t=0
     N[:, 0] = pulse_laser_maxgen(1e17 * ((1e-7) ** 3), 1e5 * 1e-7, grid_node_x) + n0
     P[:, 0] = pulse_laser_maxgen(1e17 * ((1e-7) ** 3), 1e5 * 1e-7, grid_node_x) + p0
-
-
+    
+    # Non dimensionalize
+    # n0 *= dx ** 3
+    # p0 *= dx ** 3
+    # N[:,0] *= dx ** 3
+    # P[:,0] *= dx ** 3
+    
+    # D_N *= (dt * dx ** -2)
+    # D_P *= (dt * dx ** -2)
+    
+    # rr_rate *= (dt * dx ** -3)
+    
+    # tau_N *= dt ** -1
+    # tau_P *= dt ** -1
+    # lamb = (q * q_C) / (eps * kB * T * dx)
     # Do 1st TS using 1st order backward
         
     iter_ = 0
