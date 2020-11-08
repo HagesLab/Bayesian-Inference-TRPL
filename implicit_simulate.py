@@ -14,6 +14,10 @@ eps0 = 8.854 * 1e-12 * 1e-9 # [C / V m] to {C / V nm}
 q = 1.0 # [e]
 q_C = 1.602e-19 # [C]
 kB = 8.61773e-5  # [eV / K]
+
+TOL = 0.001
+MAX_ITER = 100
+
 def pulse_laser_maxgen(max_gen, alpha, x_array):
     return (max_gen * np.exp(-alpha * x_array))
 
@@ -22,6 +26,9 @@ def rr(rate, n, p, n0, p0):
 
 def nrr(n, p, n0, p0, tau_N, tau_P):
     return (n * p - n0 * p0) / ((tau_N * p) + (tau_P * n))
+
+def surface_consumption(rate, n, p, n0, p0):
+    return rate * (n * p - n0 * p0) / (n + p)
 
 def time_step(current_N, current_P, current_E_field, prev_N, prev_P, prev_E_field, lamb, D_N, D_P, n0, p0, rr_rate, tau_N, tau_P, sf, sb, alpha_0, alpha_1, alpha_2):
     # Do 1st TS using 1st order backward
@@ -54,32 +61,28 @@ def time_step(current_N, current_P, current_E_field, prev_N, prev_P, prev_E_fiel
         mat_A_N[0,2:] = D_N * (-1/2 * np.roll(new_E_field, -1)[1:-2] - 1)
         mat_A_P[0,2:] = D_P * (1/2 * np.roll(new_E_field, -1)[1:-2] - 1)
         
+        # Volume and surface consumption terms lag one iteration behind
         consumption = rr(rr_rate, new_N, new_P, n0, p0) + nrr(new_N,new_P,n0,p0,tau_N,tau_P)
         
         vec_B_N = (alpha_1 * current_N + alpha_2 * prev_N) - consumption
         vec_B_P = (alpha_1 * current_P + alpha_2 * prev_P) - consumption
             
-        # Boundary consumption terms lag one iteration behind
-        f_0 = -sf * (new_N[0] * new_P[0] - n0 * p0) / (new_N[0] + new_P[0])
-        f_L = -sb * (new_N[m-1] * new_P[m-1] - n0 * p0) / (new_N[m-1] + new_P[m-1])
+        f_0 = surface_consumption(sf, new_N[0], new_P[0], n0, p0)
+        f_L = surface_consumption(sb, new_N[m-1], new_P[m-1], n0, p0)
         
-        vec_B_N[0] += f_0
-        vec_B_N[m-1] += f_L
-        vec_B_P[0] += f_0
-        vec_B_P[m-1] += f_L
+        vec_B_N[0] -= f_0
+        vec_B_N[m-1] -= f_L
+        vec_B_P[0] -= f_0
+        vec_B_P[m-1] -= f_L
         
+        old_P = new_P.copy()
+        old_N = new_N.copy()
         new_N = linalg.solve_banded((1,1), mat_A_N, vec_B_N)
         new_P = linalg.solve_banded((1,1), mat_A_P, vec_B_P)
         
         # E block
         new_E_field[0] = alpha_1 * current_E_field[0] + alpha_2 * prev_E_field[0]
         new_E_field[m] = alpha_1 * current_E_field[m] + alpha_2 * prev_E_field[m]
-        
-        # for i in range(1,m):
-        #     b = E_field[i,k-1] + (q_C * dt / eps) * (D_P/dx * (new_P[i] - new_P[i-1]) - D_N/dx * (new_N[i] - new_N[i-1]))
-            
-        #     A = 1 - (q_C * dt / eps) * (D_P * (-q / (2*kB*T)) * (new_P[i] + new_P[i-1]) + D_N * (-q / (2*kB*T)) * (new_N[i] + new_N[i-1]))
-        #     new_E_field[i] = (A ** -1) * b
             
         b2 = alpha_1 * current_E_field[1:-1] + alpha_2 * prev_E_field[1:-1] + lamb * (D_P * (new_P[1:] - np.roll(new_P, 1)[1:]) - D_N * (new_N[1:] - np.roll(new_N, 1)[1:]))
             
@@ -87,7 +90,11 @@ def time_step(current_N, current_P, current_E_field, prev_N, prev_P, prev_E_fiel
         new_E_field[1:-1] = (A2 ** -1) * b2
             
         iter_ += 1
-        if (iter_ > 5): break
+        norm_diff_p = np.linalg.norm(old_P - new_P) / np.linalg.norm(new_P)
+        norm_diff_n = np.linalg.norm(old_N - new_N) / np.linalg.norm(new_N)
+        if ((norm_diff_n < TOL and norm_diff_p < TOL) or iter_ > MAX_ITER): 
+            #print("Took {} iterations".format(iter_))
+            break
     
     return new_N, new_P, new_E_field
 
@@ -155,6 +162,7 @@ if __name__ == "__main__":
     
     plot_N = N[:,0].copy().reshape((m, 1))
     plot_P = P[:,0].copy().reshape((m, 1))
+    plot_tsteps = np.linspace(0, n, 6)
     
     N[:,1], P[:,1], E_field[:,1] = time_step(N[:,0], P[:,0], E_field[:,0], N[:,-1], P[:,-1], E_field[:,-1], *params, *alphas)
     
@@ -163,18 +171,18 @@ if __name__ == "__main__":
         i = k % 3
         N[:, i], P[:,i], E_field[:, i] = time_step(N[:,i-1], P[:,i-1], E_field[:,i-1], N[:,i-2], P[:,i-2], E_field[:,i-2], *params, *alphas_2nd)
     
-        if not (k % (n/5)):
+        if k in plot_tsteps:
             plot_N = np.concatenate((plot_N, N[:,i].reshape((m,1))), axis=1)
             plot_P = np.concatenate((plot_P, P[:,i].reshape((m,1))), axis=1)
     print("Took {} sec".format(time.time() - startTime))
-    #plot the graph
-
+    
+    #plot
     plt.figure(0)
     plt.yscale('log')
     t_frac=0
     for N in plot_N.T:
-        plt.plot(grid_node_x, N, label="time: {:.2f}".format(t_frac * final_t))
-        t_frac += 0.2
+        plt.plot(grid_node_x, N, label="time: {:.2f}".format(plot_tsteps[t_frac] / n * final_t))
+        t_frac += 1
     plt.xlabel('x [nm]', fontsize = 15)
     plt.ylabel('N* [unitless]', fontsize = 15)
     plt.title('electrons')
@@ -184,8 +192,8 @@ if __name__ == "__main__":
     plt.yscale('log')
     t_frac=0
     for P in plot_P.T:
-        plt.plot(grid_node_x, P, label="time: {:.2f}".format(t_frac * final_t))
-        t_frac += 0.2
+        plt.plot(grid_node_x, P, label="time: {:.2f}".format(plot_tsteps[t_frac] / n * final_t))
+        t_frac += 1
     plt.xlabel('x [nm]', fontsize = 15)
     plt.ylabel('P* [unitless]', fontsize = 15)
     plt.title('holes')
