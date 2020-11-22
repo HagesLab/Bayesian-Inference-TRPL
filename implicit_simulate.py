@@ -27,7 +27,7 @@ def Rsurf(rate, n, p, n0, p0):
 def pL(rate, n, p, n0, p0):
     return Rrad(rate, n, p, n0, p0).sum()
 
-def timeStep(P, N, E, N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, scale, a0, a1, a2):
+def timeStep(P, N, E, N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, scale, a0, a1, a2, MAX=200,TOL=1e-6):
     PO = P[0];  POO = P[1];  P = PO.copy()         # Intitalize densities
     NO = N[0];  NOO = N[1];  N = NO.copy()
     EO = E[0];  EOO = E[1];  E = EO.copy()
@@ -53,7 +53,7 @@ def timeStep(P, N, E, N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, scale, a0, a1,
         bN = -R - a1*NO - a2*NOO
         bP = -R - a1*PO - a2*POO
         bN[0]  -= s0;  bP[0]  -= s0
-        bN[-1] -= sL;  bN[-1] -= sL
+        bN[-1] -= sL;  bP[-1] -= sL
 
     # Linear solve
         NN = N.copy()
@@ -68,7 +68,7 @@ def timeStep(P, N, E, N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, scale, a0, a1,
         normP = lin.norm(P-PP) / lin.norm(P+TOL)
         normE = lin.norm(E-EE) / lin.norm(E+TOL)
         if ((normN< TOL and normP < TOL and normE < TOL)):
-   #         print("Converged after {} iterations".format(iter+1))
+    #        print("Converged after {} iterations".format(iter+1))
             return (P, N, E)
     print("FAILED TO CONVERGE after {} iterations".format(iter+1))
 
@@ -127,6 +127,7 @@ def pvsim(Time, Length, L, T, pT, A, l, N0, P0, DN, DP, rate, sr0, srL, tauN, ta
     plt.clf()
     for t in range(len(pltN)):
         plt.semilogy(x*dx, pltN[t], label="time: {:.1f}".format(t*pT*dt))
+    plt.xlim(0,Length)
     plt.xlabel(r'$x [nm]$',      fontsize = 14)
     plt.ylabel(r'$N [nm^{-3}]$', fontsize = 14)
     plt.title('electrons')
@@ -135,6 +136,7 @@ def pvsim(Time, Length, L, T, pT, A, l, N0, P0, DN, DP, rate, sr0, srL, tauN, ta
     plt.clf()
     for t in range(len(pltP)):
         plt.semilogy(x*dx, pltP[t], label="time: {:.1f}".format(t*pT*dt))
+    plt.xlim(0,Length)
     plt.xlabel(r'$x [nm]$',      fontsize = 14)
     plt.ylabel(r'$P [nm^{-3}]$', fontsize = 14)
     plt.title('holes')
@@ -144,19 +146,21 @@ def pvsim(Time, Length, L, T, pT, A, l, N0, P0, DN, DP, rate, sr0, srL, tauN, ta
     for t in range(len(pltN)):
         x = np.arange(L+1)
         plt.plot(x*dx, pltE[t], label="time: {:.1f}".format(t*pT*dt))
+    plt.xlim(0,Length)
     plt.xlabel(r'$x [nm]$',      fontsize = 14)
-    plt.ylabel(r'$E [nm^{-1}]$', fontsize = 14)
+    plt.ylabel(r'$E [nm^{-1}]$', fontsize = 14, labelpad=-3)
     plt.title(r'E field ($\beta qE)$')
     plt.legend()
     plt.figure(3)
     plt.clf()
     t = np.arange(T+1)
     plt.plot(t*dt, pLs)
+    plt.xlim(0,Time)
     plt.xlabel(r'$t [ns]$', fontsize = 14)
-    plt.ylabel(r'$PL$',     fontsize = 14)
+    plt.ylabel(r'$I\, [nm^{-2} s^{-1}]$',     fontsize = 14)
     plt.title(r'Photo-luminescence intensity')
 
-    return pLs
+    return np.array(pLs)
 
 
 if __name__ == "__main__":
@@ -166,10 +170,10 @@ if __name__ == "__main__":
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     eps = 13.6                                # dielectric constant
     L   = 150                                 # Spatial points
-    T   = 2000                                # Time points
-    pT  = 400                                 # Set plot interval
-    TOL = 0.001                               # Convergence tolerance
-    MAX = 10                                  # Max iterations
+    T   = 100                                 # Time points
+    pT  = 20                                  # Set plot interval
+    TOL = 0.00001                             # Convergence tolerance
+    MAX = 200                                 # Max iterations
 
     # Initialization
     A  = 1e-4                                 # Amplitude
@@ -189,5 +193,5 @@ if __name__ == "__main__":
     tauP = 20                                 # [ns]
 
     params = (N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, eps)
-    pvIs   = pvsim(Time, Length, L, T, pT, A, l, *params)
+    pLs    = pvsim(Time, Length, L, T, pT, A, l, *params)
 
