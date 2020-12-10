@@ -2,196 +2,200 @@
 """
 Created on Mon Nov  2 13:57:05 2020
 
-@author: cfai2
+@author: tladd
 """
 
-from matplotlib import pylab as plt
-import numpy as np
-import scipy.integrate as intg
-import scipy.linalg as lin
+import math, numpy as np
+from numba import njit
 import time
 
+@njit(cache=True)
+def Sum(X):
+    Sum = 0
+    for x in X:
+        Sum += x
+    return Sum
 
-def excite(a, l, x):
-    return (a * np.exp(-x/l))
+@njit(cache=True)
+def Norm(x, xO, tol):
+    Sum = SumX = 0
+    for n in range(len(x)):
+        Sum  += (x[n]-xO[n])*(x[n]-xO[n])
+        SumX += x[n]*x[n]
+    return math.sqrt(Sum/(SumX+tol))
 
-def Rrad(rate, n, p, n0, p0):
-    return rate*(n*p - n0*p0)
+@njit(cache=True)
+def Copy(a, b):
 
-def Rnrad(n, p, n0, p0, tauN, tauP):
-    return (n*p - n0*p0) / (tauN*p + tauP*n)
+    n = len(a)
+    for k in range(n):
+        b[k] = a[k]
 
-def Rsurf(rate, n, p, n0, p0):
-    return rate * (n * p - n0 * p0) / (n + p)
+@njit(cache=True)
+def Solve(A, b, c):
 
-def pL(rate, n, p, n0, p0):
-    return Rrad(rate, n, p, n0, p0).sum()
+    n = len(b)
+    for k in range(n-1):                            # Elimination
+        q = A[2,k]/A[1,k]
+        A[1,k+1] -= q*A[0,k+1]
+        b[k+1]   -= q*b[k]
 
-def timeStep(P, N, E, N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, scale, a0, a1, a2, MAX=200,TOL=1e-6):
-    PO = P[0];  POO = P[1];  P = PO.copy()         # Intitalize densities
-    NO = N[0];  NOO = N[1];  N = NO.copy()
-    EO = E[0];  EOO = E[1];  E = EO.copy()
-    m  = len(P)
-    AN = np.zeros((3,m))
-    AP = np.zeros((3,m))
-    AE = np.ones(m+1)
-    bN = np.zeros(m)
-    bP = np.zeros(m)
-    bE = np.zeros(m+1)
-    for iter in range(MAX):                         # Up to MAX iterations
-        AN[0,1:]  = DN*(-E[1:-1]/2 - 1)
-        AP[0,1:]  = DP*(+E[1:-1]/2 - 1)
-        AN[2,:-1] = DN*(+E[1:-1]/2 - 1)
-        AP[2,:-1] = DP*(-E[1:-1]/2 - 1)
-        AN[1] = a0 - AN[0] - AN[2]
-        AP[1] = a0 - AP[0] - AP[2]
+    c[-1] = b[-1]/A[1,-1]                           # Backsubstitution
+    for k in range(n-2,-1,-1):
+        c[k] = (b[k]-A[0,k+1]*c[k+1])/A[1,k]
 
-    # Recombination terms and RHS vectors
-        R  = Rrad(rate, N, P, N0, P0) + Rnrad(N, P, N0, P0, tauN, tauP)
-        s0 = Rsurf(sr0, N[0],  P[0],  N0, P0)
-        sL = Rsurf(srL, N[-1], P[-1], N0, P0)
-        bN = -R - a1*NO - a2*NOO
-        bP = -R - a1*PO - a2*POO
-        bN[0]  -= s0;  bP[0]  -= s0
-        bN[-1] -= sL;  bP[-1] -= sL
+@njit(cache=True)
+def timeSteps(N, P, E, A, b, matPar, N0, P0, t, TOL, MAX):
 
-    # Linear solve
-        NN = N.copy()
-        PP = P.copy()
-        EE = E.copy()
-        N  = lin.solve_banded((1,1), AN, bN)
-        P  = lin.solve_banded((1,1), AP, bP)
-        AE[1:-1] = scale*( DP*(P[1:]+P[0:-1]) + DN*(N[1:]+N[0:-1]) )/2 + a0
-        bE[1:-1] = scale*( DP*(P[1:]-P[0:-1]) - DN*(N[1:]-N[0:-1]) )   - a1*EO[1:-1] - a2*EOO[1:-1]
-        E  = bE/AE
-        normN = lin.norm(N-NN) / lin.norm(N+TOL)
-        normP = lin.norm(P-PP) / lin.norm(P+TOL)
-        normE = lin.norm(E-EE) / lin.norm(E+TOL)
-        if ((normN< TOL and normP < TOL and normE < TOL)):
-    #        print("Converged after {} iterations".format(iter+1))
-            return (P, N, E)
-    print("FAILED TO CONVERGE after {} iterations".format(iter+1))
+# Unpack local variables
+    N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda = matPar
+    if t == 1:                                  # Select integration order
+        a0 = 1.0; a1 = -1.0; a2 = 0.0           # Euler step
+    else:
+        a0 = 1.5; a1 = -2.0; a2 = 0.5           # 2nd order implicit
+    k  = (t)%3
+    ko = (t-1)%3
+    kp = (t+1)%3
+    L  = len(N[0])                              # Get length
+    N[kp,:] = N[k,:]                            # Save current values
+    P[kp,:] = P[k,:]
+    E[kp,:] = E[k,:]
 
-def pvsim(Time, Length, L, T, pT, A, l, N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, eps):
+    for iter in range(MAX):                     # Up to MAX iterations
+        for n in range(1,L):                    # Solve for N
+            A[0,n]   = DN*(-E[kp,n]/2 - 1)
+            A[2,n-1] = DN*(+E[kp,n]/2 - 1)
+        for n in range(L):
+            N[-1,n]  = N[kp,n]                  # Save previous iter
+            A[1,n]   = a0 - A[0,n] - A[2,n]
+            b[n]   = -(rate + 1/(tauP*N[kp,n] + tauN*P[kp,n])) * \
+                      (N[kp,n]*P[kp,n] - N0*P0) - a1*N[k,n] - a2*N[ko,n]
+        b[0]  -= sr0*(N[kp,0]*P[kp,0]  - N0*P0)/(N[kp,0]+P[kp,0])
+        b[-1] -= srL*(N[kp,-1]*P[kp,-1] - N0*P0)/(N[kp,-1]+P[kp,-1])
+
+        Solve(A, b, N[kp])
+
+        for n in range(1,L):                    # Solve for P
+            A[0,n]   = DP*(+E[kp,n]/2 - 1)
+            A[2,n-1] = DP*(-E[kp,n]/2 - 1)
+        for n in range(L):
+            P[-1,n]  = P[kp,n]                  # Save previous iter
+            A[1,n]   = a0 - A[0,n] - A[2,n]
+            b[n]   = -(rate + 1/(tauP*N[-1,n] + tauN*P[kp,n])) * \
+                      (N[-1,n]*P[kp,n] - N0*P0) - a1*P[k,n] - a2*P[ko,n]
+        b[0]  -= sr0*(N[-1,0]*P[kp,0]  - N0*P0)/(N[-1,0]+P[kp,0])
+        b[-1] -= srL*(N[-1,-1]*P[kp,-1] - N0*P0)/(N[-1,-1]+P[kp,-1])
+        Solve(A, b, P[kp])
+
+        for n in range(1,L):                    # Solve for E
+            E[-1,n] = E[kp,n]
+            A[0,n]  = Lambda*(DP*(P[kp,n]+P[kp,n-1]) + \
+                              DN*(N[kp,n]+N[kp,n-1]))/2 + a0
+            b[n]    = Lambda*(DP*(P[kp,n]-P[kp,n-1]) - \
+                              DN*(N[kp,n]-N[kp,n-1])) - \
+                     a1*E[k,n] - a2*E[ko,n]
+            E[kp,n] = b[n]/A[0,n]
+
+        normN = Norm(N[kp], N[-1], TOL/10)
+        normP = Norm(P[kp], P[-1], TOL/10)
+        normE = Norm(E[kp], E[-1], TOL/10)
+        if ((normN < TOL and normP < TOL and normE < TOL)):  break
+    if iter+1 == MAX: 
+        return
+        #print("FAILED TO CONVERGE after ", iter+1, " iterations")
+    return
+
+@njit(cache=True)
+def tEvol(N, P, E, plN, plP, plE, plI, A, b, matPar, \
+          Length, Time, L, T, plT, pT, TOL, MAX):
+    N0   = matPar[:,0]
+    P0   = matPar[:,1]
+    rate = matPar[:,4]
+    fail_states = [0] * len(matPar)
+    for thr in range(len(matPar)):              # Loop over thrs
+        for t in range(1,T+1):                  # Outer time loop
+            
+            try:
+                fail_states[thr] = timeSteps(N[thr], P[thr], E[thr], A[thr], b[thr], matPar[thr], \
+                              N0[thr], P0[thr], t, TOL, MAX)
+            except:
+                print("Fatal error with Thread ",thr)
+                break
+
+            if t%plT == 0:
+                plI[thr,t//plT] = Sum(rate[thr]*(N[thr,0]*P[thr,0] - \
+                                                 N0[thr]*P0[thr]))
+            if t in pT:
+                ind = pT.index(t)
+                Copy(N[thr,t%3], plN[thr,ind])
+                Copy(P[thr,t%3], plP[thr,ind])
+                Copy(E[thr,t%3], plE[thr,ind])
+
+
+    return
+
+def pvSim(matPar, simPar, iniPar):
+
+    # Unpack local parameters
+    Length, Time, L, T, plT, pT, TOL, MAX = simPar
+    dx = Length/L
+    dt = Time/T
 
     # Non dimensionalize variables
-    dx    = Length/L
-    dt    = Time/T
-    scale = lambda0/dx/eps
-    sr0  *= dt/dx
-    srL  *= dt/dx
-    rate *= dt/dx**3
-    tauN /= dt
-    tauP /= dt
-    N0   *= dx ** 3
-    P0   *= dx ** 3
-    DN   *= dt/dx**2
-    DP   *= dt/dx**2
-    A    *= dx**3
-    l    /= dx
-    params = (N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, scale)
+    dx3 = dx**3; dtdx = dt/dx; dtdx2 = dtdx/dx
+    matPar  = np.array(matPar)
+    scales  = np.array([dx3,dx3,dtdx2,dtdx2,dtdx2/dx,dtdx,dtdx,1/dt,1/dt,1/dx])
+    matPar *= scales
 
-    # Initialization - nodes at 1/2, 3/2 ... M-1/2
-    x = np.arange(L) + 0.5
-    N = np.zeros((3,L))                       # Include fields at prior steps
-    P = np.zeros((3,L))
-    E = np.zeros((3,L+1))
-    N[0] = excite(A, l, x) + N0
-    P[0] = excite(A, l, x) + P0
-    pltN = [N[0].copy()/dx**3]                # Initialize plot arrays
-    pltP = [P[0].copy()/dx**3]
-    pltE = [E[0].copy()/dx]
-    pLs  = [pL(rate, N[0], P[0], N0, P0)*dx**4/dt]
+    # Allocate arrays for each thread
+    Threads = len(matPar)
+    N   = np.zeros((Threads,4,L))              # Include prior steps and iter
+    P   = np.zeros((Threads,4,L))
+    E   = np.zeros((Threads,4,L+1))
+    A   = np.zeros((Threads,3,L))              # Matrix arrays (inc E)
+    b   = np.zeros((Threads,L))                # RHS vectors
+    plI = np.zeros((Threads,T//plT+1))         # Arrays for plotting
+    plN = np.zeros((Threads,len(pT),L))
+    plP = np.zeros((Threads,len(pT),L))
+    plE = np.zeros((Threads,len(pT),L+1))
+
+    # Initialization - nodes at 1/2, 3/2 ... L-1/2
+    a, l = iniPar
+    a  *= dx3
+    l  /= dx
+    N0   = matPar[:,0]
+    P0   = matPar[:,1]
+    rate = matPar[:,4]
+    x  = np.arange(L) + 0.5
+    dN = a * np.exp(-x/l)
+    N0, P0 = matPar[:,0:2].T
+    N[:,0] = np.add.outer(N0, dN)
+    P[:,0] = np.add.outer(P0, dN)
+    N[:,1] = N[:,0].copy()
+    P[:,1] = P[:,0].copy()
+    plN[:,0] = N[:,0]
+    plP[:,0] = P[:,0]
+    plE[:,0] = E[:,0]
+    plI[:,0] = rate[:]*((N[:,0]*P[:,0]).T - N0*P0).sum(axis=0)
 
     clock0 = time.time()
-    for t in range(1,T+1):                    # Main time loop
-        if t == 1:                            # Select integration order
-            alpha = (1, -1, 0)                # Euler step
-        else:
-            alpha = (1.5, -2, 0.5)            # 2nd order imPLcit
-        N[2] = N[1].copy()                    # Update old densities
-        P[2] = P[1].copy()
-        E[2] = E[1].copy()
-        N[1] = N[0].copy()
-        P[1] = P[0].copy()
-        E[1] = E[0].copy()
-        P[0],N[0],E[0] = timeStep(P[1:], N[1:], E[1:], *params, *alpha)
-        pLs.append(pL(rate, N[0], P[0], N0, P0)*dx**4/dt)
-        if t%pT == 0:
-            pltN.append(N[0].copy()/dx**3)
-            pltP.append(P[0].copy()/dx**3)
-            pltE.append(E[0].copy()/dx)
+    tEvol(N, P, E, plN, plP, plE, plI, A, b, matPar, *simPar)
     print("Took {} sec".format(time.time() - clock0))
 
-    plt.figure(0)                             # Plots
-    plt.clf()
-    for t in range(len(pltN)):
-        plt.semilogy(x*dx, pltN[t], label="time: {:.1f}".format(t*pT*dt))
-    plt.xlim(0,Length)
-    plt.xlabel(r'$x [nm]$',      fontsize = 14)
-    plt.ylabel(r'$N [nm^{-3}]$', fontsize = 14)
-    plt.title('electrons')
-    plt.legend()
-    plt.figure(1)
-    plt.clf()
-    for t in range(len(pltP)):
-        plt.semilogy(x*dx, pltP[t], label="time: {:.1f}".format(t*pT*dt))
-    plt.xlim(0,Length)
-    plt.xlabel(r'$x [nm]$',      fontsize = 14)
-    plt.ylabel(r'$P [nm^{-3}]$', fontsize = 14)
-    plt.title('holes')
-    plt.legend()
-    plt.figure(2)
-    plt.clf()
-    for t in range(len(pltN)):
-        x = np.arange(L+1)
-        plt.plot(x*dx, pltE[t], label="time: {:.1f}".format(t*pT*dt))
-    plt.xlim(0,Length)
-    plt.xlabel(r'$x [nm]$',      fontsize = 14)
-    plt.ylabel(r'$E [nm^{-1}]$', fontsize = 14, labelpad=-3)
-    plt.title(r'E field ($\beta qE)$')
-    plt.legend()
-    plt.figure(3)
-    plt.clf()
-    t = np.arange(T+1)
-    plt.plot(t*dt, pLs)
-    plt.xlim(0,Time)
-    plt.xlabel(r'$t [ns]$', fontsize = 14)
-    plt.ylabel(r'$I\, [nm^{-2} s^{-1}]$',     fontsize = 14)
-    plt.title(r'Photo-luminescence intensity')
+    plI *= dx**4/dt
+    plN /= dx**3
+    plP /= dx**3
+    plE /= dx
 
-    return np.array(pLs)
-
+    return (plN, plP, plE, plI)
 
 if __name__ == "__main__":
 
-    Time    = 100                             # Final time (ns)
-    Length  = 1500                            # Length (nm)
-    lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
-    eps = 13.6                                # dielectric constant
-    L   = 150                                 # Spatial points
-    T   = 100                                 # Time points
-    pT  = 20                                  # Set plot interval
-    TOL = 0.00001                             # Convergence tolerance
-    MAX = 200                                 # Max iterations
-
-    # Initialization
-    A  = 1e-4                                 # Amplitude
-    l  = 100                                  # Length scale [nm]
-
-    # Electron/hole density and diffusion
-    N0  = 1e-13                               # [/ nm^3]
-    P0  = 1e-6                                # [/ nm^3]
-    DN  = 2.569257e4                          # [nm^2 / ns]
-    DP  = 2.569257e3                          # 1 cm^2/Vs = 2.569257e3 nm^2/ns
-
-    # Recombination rates
-    sr0  = 59.50                              # [nm / ns]
-    srL  = 1e-8                               # [nm / ns]
-    rate = 1e2                                # [nm^3 / ns]
-    tauN = 20                                 # [ns]
-    tauP = 20                                 # [ns]
-
-    params = (N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, eps)
-    pLs    = pvsim(Time, Length, L, T, pT, A, l, *params)
+    import pickle
+    simPar, iniPar, matPar = pickle.load(open('hagesInputs.pik', 'rb'))
+    pTh = -1
+    pvOut = pvSim(matPar, simPar, iniPar)
+    
+    
+    pickle.dump(pvOut, open('hagesOut.pik', 'wb'))
 
