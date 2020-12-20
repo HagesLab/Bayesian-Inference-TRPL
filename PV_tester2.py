@@ -51,7 +51,7 @@ def dydt(t, y, L, N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda):
 
 
 if __name__ == "__main__":
-    simPar, iniPar, matPar = pickle.load(open('hagesInputs.pik', 'rb'))
+    simPar, iniPar, matPar = pickle.load(open('hagesInputs302.pik', 'rb'))
     # Unpack local parameters
     Length, Time, L, T, plT, pT, TOL, MAX = simPar
     dx = Length/L
@@ -80,6 +80,12 @@ if __name__ == "__main__":
     
     import time
     startTime = time.time()
+    haches = np.zeros(nthr)
+    methods = np.zeros((nthr, T), dtype=int)
+    orders = np.zeros((nthr, T), dtype=int)
+    Threads = [69, 420, 1420, 2580]
+    
+    #for thr in Threads:
     for thr in range(nthr):
         print(thr)
         init_N = N0[thr] + dN
@@ -89,12 +95,28 @@ if __name__ == "__main__":
         init_condition = np.concatenate([init_N, init_P, init_E], axis=None)
     
         tSteps = np.linspace(0, T, T+1)
-        data = odeint(dydt, init_condition, tSteps, args=(L, *matPar[thr]),\
-            tfirst=True)
+        data, error_dict = odeint(dydt, init_condition, tSteps, args=(L, *matPar[thr]),\
+            tfirst=True, full_output=True)
             
         N = data[:,0:L]
         P = data[:,L:2*(L)]
         E = data[:,2*(L):]
+        h = 4.0
+        while True:
+            if (N < 0).any() or (P < 0).any():
+                print("h=",h)
+                haches[thr] = h
+                data, error_dict = odeint(dydt, init_condition, tSteps, args=(L, *matPar[thr]),\
+                              tfirst=True, hmax=h, full_output=True)
+                h /= 2
+                
+                N = data[:,0:L]
+                P = data[:,L:2*(L)]
+                E = data[:,2*(L):]
+                
+
+            else:
+                break
         
         plI[thr] = rate[thr] * np.sum(N[::plT] * P[::plT] - N0[thr] * P0[thr], axis=1) 
         for t in pT:
@@ -102,10 +124,13 @@ if __name__ == "__main__":
             plP[thr, pT.index(t)] = P[t]
             plE[thr, pT.index(t)] = E[t]
             
+        methods[thr] = error_dict['mused']
+        orders[thr] = error_dict['nqu']
+            
     print("Took {} sec".format(time.time() - startTime))
     plI *= dx**4/dt
     plN /= dx**3
     plP /= dx**3
     plE /= dx
     
-    pickle.dump((plN, plP, plE, plI), open('testHagesOut.pik', 'wb'))
+    pickle.dump((plN, plP, plE, plI), open('testHagesOut300.pik', 'wb'))
