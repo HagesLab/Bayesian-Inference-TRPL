@@ -16,8 +16,6 @@ import matplotlib.backends.backend_tkagg as tkagg
 from matplotlib.figure import Figure
 from functools import partial
 class TkFrame:
-	# This is somewhat Java-like: everything about the GUI exists inside a class
-    # A goal is to achieve total separation between this class (i.e. the GUI) and all mathematical operations, which makes this GUI reusable for different problems
 
     def __init__(self, title):
         self.outputs_dict = {"N", "P", "E", "PL"}
@@ -103,7 +101,6 @@ class TkFrame:
         plt.set_xlabel(r'$x [nm]$',      fontsize = 14)
         plt.set_ylabel(r'$P [nm^{-3}]$', fontsize = 14)
         plt.set_title('holes')
-        plt.legend().set_draggable(True)
         
         plt = self.sim_subplots["E"]
         plt.cla()
@@ -116,19 +113,22 @@ class TkFrame:
         plt.set_xlabel(r'$x [nm]$',      fontsize = 14)
         plt.set_ylabel(r'$E [nm^{-1}]$', fontsize = 14, labelpad=-3)
         plt.set_title(r'E field ($\beta qE)$')
-        plt.legend().set_draggable(True)
         
         plt = self.sim_subplots["PL"]
         plt.cla()
         t = np.arange(self.T//self.plT+1)
         rt = np.arange(self.rT//self.rplT + 1)
-        plt.plot(t*self.dt*self.plT, self.plI[pTh], label="imp")
-        plt.plot(rt*self.rdt*self.rplT, self.refplI[pTh], '--', label="ref")
+        plt.semilogy(t*self.dt*self.plT, self.plI[pTh], label="imp")
+        plt.semilogy(rt*self.rdt*self.rplT, self.refplI[pTh], '--', label="ref")
         plt.set_xlim(0,self.Time)
         plt.set_xlabel(r'$t [ns]$', fontsize = 14)
         plt.set_ylabel(r'$I\, [nm^{-2} s^{-1}]$',     fontsize = 14)
         plt.set_title(r'Photo-luminescence intensity')
-        
+        if any(self.plI[pTh] < 0) or any(self.refplI[pTh] < 0):
+            plt.set_yscale('symlog')
+        else:
+            plt.set_yscale('log')
+            
         self.fig.suptitle("Thread " + str(pTh))
         self.fig.tight_layout()
         self.fig.canvas.draw()
@@ -164,16 +164,16 @@ if __name__ == "__main__":
     f = TkFrame("Plot View")
     
     # pvSim output pickle
-    data_path = 'hagesOut300.pik'
+    data_path = 'hagesOut700s.pik'
     
     # odeint reference pickle
-    ref_path = 'testHagesOut302.pik'
+    ref_path = 'testHagesOut700.pik'
     
     # pvSim output's corresponding input
-    input_path = 'hagesInputs300.pik'
+    input_path = 'hagesInputs700.pik'
     
     # odeint output's corresponding input
-    ref_input_path = 'hagesInputs302.pik'
+    ref_input_path = 'hagesInputs700.pik'
     
     f.run(data_path, ref_path, input_path, ref_input_path)
 
