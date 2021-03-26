@@ -3,7 +3,7 @@
 """
 Created on Sat Dec 19 15:05:30 2020
 
-@author: tladd
+PV simulator - CPU version - Tony Ladd and Calvin Fai
 """
 
 
@@ -165,7 +165,7 @@ def pvSim(matPar, simPar, iniPar):
     itrs = tEvol(N, P, E, plN, plP, plE, plI, A, b, matPar, simPar)
     print("Took {} sec".format(time.time() - clock0))
 
-    plI *= dx**4/dt
+    plI /= dx**2*dt
     plN /= dx**3
     plP /= dx**3
     plE /= dx
@@ -176,15 +176,15 @@ if __name__ == "__main__":
 
     import pickle
     import csv
-    simPar, iniPar, matPar = pickle.load(open('hagesInputs700.pik', 'rb'))
+    simPar, iniPar, matPar = pickle.load(open('i600.pik', 'rb'))
 
     itrs, pvOut = pvSim(matPar, simPar, iniPar)
 
     itrs = np.array(itrs).reshape((1, len(itrs)))
     itrs = np.concatenate((itrs.T, matPar), axis=1)
-    with open('itrs.csv', 'w+', newline='') as ofstream:
-        writer = csv.writer(ofstream, delimiter=',')
-        writer.writerows(itrs)
+    # with open('itrs.csv', 'w+', newline='') as ofstream:
+    #     writer = csv.writer(ofstream, delimiter=',')
+    #     writer.writerows(itrs)
 
-    pickle.dump(pvOut, open('hagesOut700sss.pik', 'wb'))
+    pickle.dump(pvOut, open('o601.pik', 'wb'))
 
