@@ -12,7 +12,6 @@ q_C = 1.602e-19 # [C]
 kB = 8.61773e-5  # [eV / K]
 
 import numpy as np
-from pvSimPCR import pvSim
 
 def indexGrid(N, refs):                        # Arrays of cell coordinates
     cN  = N.copy()                             # Copy of cell indexes
@@ -91,7 +90,13 @@ def export_marginal_P(marP, pN, minX, maxX, param_names):
     return        
 
 def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):        # Driver function
+    global num_SMs
+    global has_GPU
     for nref in range(len(refs)):                            # Loop refinements
+        while not any(P > minP[nref]):
+            print("Warning: prob. grid too diffuse for minP {}".format(minP[nref]))
+            minP[nref] /= 2
+            print("Retrying with minP {}".format(minP[nref]))
         N   = N[np.where(P > minP[nref])]                    # P < minP
         N   = refineGrid(N, refs[nref])                      # Refine grid
         Np  = np.prod(refs[nref])                            # Params per set
@@ -105,8 +110,10 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
             X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
             
-            plI = model(X, sim_params, init_params, sim_params[2], Np)[-1]
-            
+            if has_GPU:
+                plI = model(X, sim_params, init_params, sim_params[2], num_SMs)[-1]
+            else:
+                plI = model(X, sim_params, init_params)[1][-1]
             Pbk = np.zeros(len(X)) # P's for block
             times, values, std = data
             
@@ -122,6 +129,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             lnP[n:n+Np] = Pbk
             
         # TODO: Better normalization scheme
+        print(lnP)
         P = np.exp(lnP + 1000*np.log(2) - np.log(len(lnP)) - np.max(lnP))
         P  /= np.sum(P)                                      # Normalize P's
     return N, P
@@ -129,6 +137,8 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 
 #-----------------------------------------------------------------------------#
 import csv
+from numba import cuda
+
 def get_data(exp_file, scale_f=1):
     with open(exp_file, newline='') as file:
         ifstream = csv.reader(file)
@@ -172,13 +182,13 @@ if __name__ == "__main__":
     param_names = ["n0", "p0", "mu_n", "mu_p", "B", "Sf", "Sb", "tau_n", "tau_p", "rel. permitivity^-1"]
     unit_conversions = np.array([1,1,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0])
     
-    ref1 = np.array([1,1,1,1,16,16,1,1,1,1])
-    ref2 = np.array([1,1,1,1,4,4,1,1,1,1])
-    ref3 = np.array([1,1,1,1,4,4,1,1,1,1])
-    refs = [ref1, ref2, ref3]                         # Refinements
+    ref1 = np.array([1,1,16,1,16,16,16,1,1,1])
+    ref2 = np.array([1,1,4,1,4,4,4,1,1,1])
+    ref3 = np.array([1,1,4,1,4,4,4,1,1,1])
+    refs = np.array([ref1, ref2, ref3])                         # Refinements
     
-    minX = np.array([N0, P0, 10, 10, 1e-12, 1e2, 1e-6, 20, 20, 13.6**-1])                        # Smallest param values
-    maxX = np.array([N0, P0, 10, 10, 1e-9, 5e4, 1e-6, 20, 20, 13.6**-1])                        # Largest param values
+    minX = np.array([N0, P0, 1, 10, 1e-12, 1e2, 1e-7, 20, 20, 13.6**-1])                        # Smallest param values
+    maxX = np.array([N0, P0, 20, 10, 1e-9, 5e4, 2e-6, 20, 20, 13.6**-1])                        # Largest param values
     
     #minP = np.array([0, 0.01, 0.01])                 # Threshold P
     minP = np.array([0] + [0.01 for i in range(len(refs) - 1)])
@@ -206,13 +216,31 @@ if __name__ == "__main__":
                 
             else:
                 print("{}: {} to {}".format(param_names[i], minX[i], maxX[i]))
-                
+        
+        print("Refinement levels:")
+        for i in range(num_params):
+            print("{}: {}".format(param_names[i], refs[:,i]))        
         e_data = get_data(experimental_data_filename, scale_f=1e-35)
         print("\nExperimental data - {}".format(experimental_data_filename))
         print(e_data)
-        _continue = input("Continue? (y/n)")
+
+        try:
+            has_GPU = cuda.detect()
+        except Exception:
+            has_GPU = False
+
+        if has_GPU: 
+            device = cuda.get_current_device()
+            num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
+            from pvSimPCR import pvSim
+        else:
+            print("No GPU detected - reverting to CPU simulation")
+            num_SMs = -1
+            from pvSim import pvSim
+
+        #_continue = input("Continue? (y/n)")
         
-        if not (_continue == 'y'): raise KeyboardInterrupt("Aborted")
+        #if not (_continue == 'y'): raise KeyboardInterrupt("Aborted")
         
     except Exception as oops:
         print(oops)
