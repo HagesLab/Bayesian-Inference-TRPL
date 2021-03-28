@@ -5,14 +5,12 @@ Created on Sat Dec 19 15:05:30 2020
 
 @author: tladd
 """
-
-
 import numpy as np
 from numba import cuda, float32 as floatX
 import time
 
 @cuda.jit(device=True)
-def norm2(A0,A1,A2,b,c,buffer):
+def norm2(A0,A1,A2,b,c,buffer, TPB):
     N = len(b)
 
     buffer[0] = abs(A1[0]*c[0]+A0[0]*c[1] - b[0])
@@ -37,7 +35,7 @@ def norm2(A0,A1,A2,b,c,buffer):
     return buffer[0]/buffer[N]
 
 @cuda.jit(device=True)
-def pcreduce(ld, d, ud, B, c, buffer):
+def pcreduce(ld, d, ud, B, c, buffer, TPB):
 
     rf = 1
     N = len(ld)
@@ -87,7 +85,8 @@ def iterate(N, P, E, matPar, par):
 
 # Unpack local variables
     N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda = matPar
-    a0, a1, a2, k, kp, ko, L, tol, MAX = par
+    a0, a1, a2, k, kp, ko, L, tol, MAX, TPB = par
+
     TOL  = 10.0**(-tol)
     Nk = cuda.shared.array(shape=(SIZ), dtype=floatX)
     Pk = cuda.shared.array(shape=(SIZ), dtype=floatX)
@@ -132,11 +131,10 @@ def iterate(N, P, E, matPar, par):
         bb[0]  -= sr0*(Nk[ 0]*Pk[ 0]-N0*P0)/(Nk[ 0]+Pk[ 0]) + ds0*Nk[ 0]
         bb[-1] -= srL*(Nk[-1]*Pk[-1]-N0*P0)/(Nk[-1]+Pk[-1]) + dsL*Nk[-1]
 
-
-        errN = norm2(A0,A1,A2,bb,Nk,buffer)
+        errN = norm2(A0,A1,A2,bb,Nk,buffer, TPB)
         cuda.syncthreads()
 
-        pcreduce(A2, A1, A0, bb, Nk, buffer)
+        pcreduce(A2, A1, A0, bb, Nk, buffer, TPB)
 
         cuda.syncthreads()
 
@@ -158,9 +156,9 @@ def iterate(N, P, E, matPar, par):
         bb[0]  -= sr0*(Nk[ 0]*Pk[ 0]-N0*P0)/(Nk[ 0]+Pk[ 0]) + ds0*Pk[ 0]
         bb[-1] -= srL*(Nk[-1]*Pk[-1]-N0*P0)/(Nk[-1]+Pk[-1]) + dsL*Pk[-1]
 
-        errP = norm2(A0,A1,A2,bb,Pk, buffer)
+        errP = norm2(A0,A1,A2,bb,Pk, buffer, TPB)
         cuda.syncthreads()
-        pcreduce(A2, A1, A0, bb, Pk, buffer)
+        pcreduce(A2, A1, A0, bb, Pk, buffer, TPB)
         cuda.syncthreads()
 
         for n in range(1+th, L, TPB):                    # Solve for E
@@ -199,7 +197,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
         kp  = (t+1)%3                               # new time
         k   = (t)  %3                               # current time
         ko  = (t-1)%3                               # old time
-        par = (a0, a1, a2, k, kp, ko, L, tol, MAX)
+        par = (a0, a1, a2, k, kp, ko, L, tol, MAX, TPB)
         for blk in range((len(matPar)+BPG-1)//BPG): # Loop over blocks
         #for blk in range(1):
             #if t==0 and cuda.grid(1) == 0:
@@ -210,7 +208,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
                 if iters >= MAX:
                     print('NO CONVERGENCE: ', \
                           'Block ', p, 'simtime ', t, iters, ' iterations')
-                #    break
+                    #break
                 if t%plT == 0:
                     Sum = 0
                     for n in range(L):
@@ -224,13 +222,17 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
         if t == pT[ind]:  ind += 1
                     
 
-def pvSim(matPar, simPar, iniPar):
+def pvSim(matPar, simPar, iniPar, TPB, BPG):
 
     # Unpack local parameters
     Length, Time, L, T, plT, pT, tol, MAX = simPar
     dx = Length/L
     dt = Time/T
     simPar = (L, T, tol, MAX, TPB, BPG, plT, *pT)
+    global SIZ 
+    SIZ = TPB
+    global BuSIZ
+    BuSIZ = int(SIZ)*4
 
     # Non dimensionalize variables
     dx3 = dx**3; dtdx = dt/dx; dtdx2 = dtdx/dx
@@ -303,8 +305,6 @@ if __name__ == "__main__":
     simPar, iniPar, matPar = pickle.load(open(dir + fname, 'rb'))
     TPB = simPar[2]                               # Define # Threads per block: one per node 
     BPG = SM_count * 2                                    # Define # Blocks: multiple of # available SMs
-    SIZ = simPar[2]
-    BuSIZ = int(SIZ*4)
-    pvOut = pvSim(matPar, simPar, iniPar)
+    pvOut = pvSim(matPar, simPar, iniPar, TPB, BPG)
     pickle.dump(pvOut, open(dir + oname, 'wb'))
     print("Wrote results to ", dir + oname)

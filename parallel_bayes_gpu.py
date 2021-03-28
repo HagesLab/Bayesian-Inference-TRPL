@@ -12,7 +12,7 @@ q_C = 1.602e-19 # [C]
 kB = 8.61773e-5  # [eV / K]
 
 import numpy as np
-from pvSim import pvSim
+from pvSimPCR import pvSim
 
 def indexGrid(N, refs):                        # Arrays of cell coordinates
     cN  = N.copy()                             # Copy of cell indexes
@@ -55,7 +55,6 @@ def modelErr(F, ref):
     return np.array(err)
 
 
-
 def marginalP(N, P, refs):                                   # Marginal P's
     pN   = np.prod(refs, axis=0)
     ind  = indexGrid(N, refs)
@@ -84,6 +83,7 @@ def plotMarginalP(marP, pN, minX, maxX, param_names):                     # Plot
 def export_marginal_P(marP, pN, minX, maxX, param_names):
 
     for m in np.where(pN > 1)[0]:
+        print("Writing marginal {} file".format(param_names[m]))
         im = np.array([*range(pN[m])]) + 0.5                 # Coords
         X = minX[m] + (maxX[m]-minX[m])*im/pN[m]             # Param values
         np.savetxt(param_names[m] + ".csv", np.vstack((X, marP[m])).T, delimiter=",")
@@ -99,13 +99,13 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
         print("ref level, N: ", nref, len(N))
         
         # TODO: Determine block size from GPU info instead of refinement?
+        # Np cannot be modified! indexGrid assumes a certain value of Np
         for n in range(0, len(N), Np):                       # Loop over blks
             Nn  = N[n:n+Np]                                  # Cells block
             ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
             X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
             
-            # TODO: Call GPU's pvSim instead of CPU's
-            plI = model(X, sim_params, init_params)[-1]
+            plI = model(X, sim_params, init_params, sim_params[2], Np)[-1]
             
             Pbk = np.zeros(len(X)) # P's for block
             times, values, std = data
@@ -128,7 +128,6 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 
 
 #-----------------------------------------------------------------------------#
-import pandas as pd
 import csv
 def get_data(exp_file, scale_f=1):
     with open(exp_file, newline='') as file:
@@ -142,7 +141,6 @@ def get_data(exp_file, scale_f=1):
             uncertainty.append(float(row[2]))
 
     t = np.array(t)
-    
     
     PL = np.array(PL) * scale_f
     uncertainty = np.array(uncertainty) * scale_f
@@ -195,15 +193,10 @@ if __name__ == "__main__":
     try:
         num_params = len(param_names)
         assert (len(unit_conversions) == num_params), "Unit conversion array is missing entries"
-            
         assert (len(minX) == num_params), "Missing min param values"
-            
         assert (len(maxX) == num_params), "Missing max param values"  
-            
         assert all(minX > 0), "Invalid param values"
-            
         assert all(minX <= maxX), "Min params larger than max params"
-            
         # TODO: Additional checks involving refs
             
         print("Starting simulations with the following parameters:")
@@ -227,10 +220,14 @@ if __name__ == "__main__":
         
     minX *= unit_conversions
     maxX *= unit_conversions
+
+    import time
+    clock0 = time.time()
     N, P = bayes(pvSim, N, P, refs, minX, maxX, iniPar, simPar, minP, e_data)
+    print("Bayesim took {} s".format(time.time() - clock0))
     marP = marginalP(N, P, refs)
-    plotMarginalP(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
-    #export_marginal_P(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
+    #plotMarginalP(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
+    export_marginal_P(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
 
 
 
