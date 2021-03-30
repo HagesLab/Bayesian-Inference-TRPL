@@ -85,7 +85,7 @@ def export_marginal_P(marP, pN, minX, maxX, param_names):
         print("Writing marginal {} file".format(param_names[m]))
         im = np.array([*range(pN[m])]) + 0.5                 # Coords
         X = minX[m] + (maxX[m]-minX[m])*im/pN[m]             # Param values
-        np.savetxt(param_names[m] + ".csv", np.vstack((X, marP[m])).T, delimiter=",")
+        np.savetxt(r"/home/cfai2304/super_bayes/" + experimental_data_filename + "_BAYRES_" + param_names[m] + ".csv", np.vstack((X, marP[m])).T, delimiter=",")
 
     return        
 
@@ -114,6 +114,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
                 plI = model(X, sim_params, init_params, sim_params[2], num_SMs)[-1]
             else:
                 plI = model(X, sim_params, init_params)[1][-1]
+
             Pbk = np.zeros(len(X)) # P's for block
             times, values, std = data
             
@@ -158,11 +159,11 @@ def get_data(exp_file, scale_f=1):
 
 if __name__ == "__main__":
     # simPar
-    Time    = 100                             # Final time (ns)
+    Time    = 50                             # Final time (ns)
     Length  = 1500                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
-    T   = 4000                                # Time points
+    T   = 2000                                # Time points
     plT = 10                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
@@ -171,24 +172,22 @@ if __name__ == "__main__":
     simPar = (Length, Time, L, T, plT, pT, tol, MAX)
     
     # iniPar
-    a  = 1e18/(1e7)**3                        # Amplitude
+    a  = 1e17/(1e7)**3                        # Amplitude
     l  = 100                                  # Length scale [nm]
-    N0 = 1e8 /(1e7)**3                        # [/ nm^3]
-    P0 = 1e16/(1e7)**3                        # [/ nm^3]
     iniPar = (a, l)
     
     # This code follows a strict order of parameters:
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda]
     param_names = ["n0", "p0", "mu_n", "mu_p", "B", "Sf", "Sb", "tau_n", "tau_p", "rel. permitivity^-1"]
-    unit_conversions = np.array([1,1,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0])
+    unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0])
     
-    ref1 = np.array([1,1,16,1,16,16,16,1,1,1])
-    ref2 = np.array([1,1,4,1,4,4,4,1,1,1])
-    ref3 = np.array([1,1,4,1,4,4,4,1,1,1])
+    ref1 = np.array([1,8,1,1,8,8,1,8,8,1])
+    ref2 = np.array([1,4,1,1,4,4,1,4,4,1])
+    ref3 = np.array([1,4,1,1,4,4,1,4,4,1])
     refs = np.array([ref1, ref2, ref3])                         # Refinements
     
-    minX = np.array([N0, P0, 1, 10, 1e-12, 1e2, 1e-7, 20, 20, 13.6**-1])                        # Smallest param values
-    maxX = np.array([N0, P0, 20, 10, 1e-9, 5e4, 2e-6, 20, 20, 13.6**-1])                        # Largest param values
+    minX = np.array([1e8, 2e14, 10, 10, 1e-12, 1e2, 1e-6, 10, 10, 13.6**-1])                        # Smallest param values
+    maxX = np.array([1e8, 1e17, 10, 10, 1e-9, 5e4, 1e-6, 100, 100, 13.6**-1])                        # Largest param values
     
     #minP = np.array([0, 0.01, 0.01])                 # Threshold P
     minP = np.array([0] + [0.01 for i in range(len(refs) - 1)])
@@ -196,7 +195,7 @@ if __name__ == "__main__":
     N    = np.array([0])                              # Initial N
     P    = np.array([1.0])                            # Initial P
 
-    experimental_data_filename = "pvSim example.csv"
+    experimental_data_filename = "less_noisy pvSim example.csv"
     
     # Pre-checks
     from sys import exit
@@ -220,7 +219,7 @@ if __name__ == "__main__":
         print("Refinement levels:")
         for i in range(num_params):
             print("{}: {}".format(param_names[i], refs[:,i]))        
-        e_data = get_data(experimental_data_filename, scale_f=1e-35)
+        e_data = get_data(experimental_data_filename, scale_f=1e-37) # [carr/cm^2 s] to [carr/nm^2 ns]
         print("\nExperimental data - {}".format(experimental_data_filename))
         print(e_data)
 
