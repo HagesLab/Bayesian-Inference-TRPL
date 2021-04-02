@@ -30,9 +30,11 @@ def indexGrid(N, refs):                        # Arrays of cell coordinates
     return indexes
 
 def paramGrid(ind, refs, minX, maxX):          # Arrays of parameters
+    global do_log
     pN  = np.prod(refs, axis=0)                # Scale for indexes
-    X   = minX + (maxX-minX)*(ind + 0.5)/pN    # Get params
-    return X
+    X_lin   = minX + (maxX-minX)*(ind + 0.5)/pN    # Get params
+    X_log = minX * (maxX/minX)**((ind + 0.5)/pN)
+    return X_lin * (1-do_log) + X_log * do_log
 
 def refineGrid (N, ref):                       # Refine grid
     siz = np.prod(ref)                         # Size of refined block
@@ -84,7 +86,11 @@ def export_marginal_P(marP, pN, minX, maxX, param_names):
     for m in np.where(pN > 1)[0]:
         print("Writing marginal {} file".format(param_names[m]))
         im = np.array([*range(pN[m])]) + 0.5                 # Coords
-        X = minX[m] + (maxX[m]-minX[m])*im/pN[m]             # Param values
+        #X = minX[m] + (maxX[m]-minX[m])*im/pN[m]             # Param values
+        X_lin   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+        X_log = minX[m] * (maxX[m]/minX[m])**((im)/pN[m])
+        X =  X_lin * (1-do_log[m]) + X_log * do_log[m]
+
         np.savetxt(r"/home/cfai2304/super_bayes/" + experimental_data_filename + "_BAYRES_" + param_names[m] + ".csv", np.vstack((X, marP[m])).T, delimiter=",")
 
     return        
@@ -92,11 +98,12 @@ def export_marginal_P(marP, pN, minX, maxX, param_names):
 def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):        # Driver function
     global num_SMs
     global has_GPU
+    global GPU_GROUP_SIZE
     for nref in range(len(refs)):                            # Loop refinements
-        while not any(P > minP[nref]):
-            print("Warning: prob. grid too diffuse for minP {}".format(minP[nref]))
-            minP[nref] /= 2
-            print("Retrying with minP {}".format(minP[nref]))
+        #while not any(P > minP[nref]):
+        #    print("Warning: prob. grid too diffuse for minP {}".format(minP[nref]))
+        #    minP[nref] /= 2
+        #    print("Retrying with minP {}".format(minP[nref]))
         N   = N[np.where(P > minP[nref])]                    # P < minP
         N   = refineGrid(N, refs[nref])                      # Refine grid
         Np  = np.prod(refs[nref])                            # Params per set
@@ -109,11 +116,15 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             Nn  = N[n:n+Np]                                  # Cells block
             ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
             X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
+            ## OVERRIDE: MAKE SRH TAUS EQUAL
+            #X[:,8]=X[:,7]
+            plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1))
+            for blk in range(0,len(X),GPU_GROUP_SIZE):
             
-            if has_GPU:
-                plI = model(X, sim_params, init_params, sim_params[2], num_SMs)[-1]
-            else:
-                plI = model(X, sim_params, init_params)[1][-1]
+                if has_GPU:
+                    plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params, sim_params[2], num_SMs)[-1]
+                else:
+                    plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params)[1][-1]
 
             Pbk = np.zeros(len(X)) # P's for block
             times, values, std = data
@@ -172,7 +183,7 @@ if __name__ == "__main__":
     simPar = (Length, Time, L, T, plT, pT, tol, MAX)
     
     # iniPar
-    a  = 1e17/(1e7)**3                        # Amplitude
+    a  = 1e18/(1e7)**3                        # Amplitude
     l  = 100                                  # Length scale [nm]
     iniPar = (a, l)
     
@@ -180,28 +191,32 @@ if __name__ == "__main__":
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda]
     param_names = ["n0", "p0", "mu_n", "mu_p", "B", "Sf", "Sb", "tau_n", "tau_p", "rel. permitivity^-1"]
     unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0])
-    
-    ref1 = np.array([1,8,1,1,8,8,1,8,8,1])
-    ref2 = np.array([1,4,1,1,4,4,1,4,4,1])
+    do_log = np.array([1,1,0,0,1,1,1,0,0,0])
+
+    GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
+    ref1 = np.array([1,32,1,1,16,16,1,16,8,1])
+    ref2 = np.array([1,1,1,1,16,16,1,16,1,1])
     ref3 = np.array([1,4,1,1,4,4,1,4,4,1])
-    refs = np.array([ref1, ref2, ref3])                         # Refinements
+    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
-    minX = np.array([1e8, 2e14, 10, 10, 1e-12, 1e2, 1e-6, 10, 10, 13.6**-1])                        # Smallest param values
-    maxX = np.array([1e8, 1e17, 10, 10, 1e-9, 5e4, 1e-6, 100, 100, 13.6**-1])                        # Largest param values
-    
+
+    minX = np.array([1e8, 1e14, 10, 10, 1e-11, 1e2, 1e-6, 1, 1, 13.6**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e16, 10, 10, 1e-9, 1e4, 1e-6, 100, 100, 13.6**-1])
+
     #minP = np.array([0, 0.01, 0.01])                 # Threshold P
-    minP = np.array([0] + [0.01 for i in range(len(refs) - 1)])
+    minP = np.array([0] + [0.00025 for i in range(len(refs) - 1)])
 
     N    = np.array([0])                              # Initial N
     P    = np.array([1.0])                            # Initial P
 
-    experimental_data_filename = "less_noisy pvSim example.csv"
+    experimental_data_filename = "mid_noise pvSim_3312021_higherinj.csv"
     
     # Pre-checks
     from sys import exit
     try:
         num_params = len(param_names)
         assert (len(unit_conversions) == num_params), "Unit conversion array is missing entries"
+        assert (len(do_log) == num_params), "do_log mask is missing values"
         assert (len(minX) == num_params), "Missing min param values"
         assert (len(maxX) == num_params), "Missing max param values"  
         assert all(minX > 0), "Invalid param values"
