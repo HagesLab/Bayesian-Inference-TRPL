@@ -47,7 +47,7 @@ def modelErr(F, ref):
     pN = 1
     err = []
     for m in range(len(ref)):
-        dF  = np.abs(F - np.roll(F, -pN))      # Absolute differences
+        dF  = 1.5*np.abs(F - np.roll(F, -pN))      # Absolute differences
         dk  = ref[m]*pN                        # Step size
         for n in range(pN):                    # Need pN passes
             dF[dk-pN+n:N:dk] = 0               # Zero wrapped entries
@@ -67,19 +67,49 @@ def marginalP(N, P, refs):                                   # Marginal P's
         marP.append(Pm)                                      # Add to list
     return np.array(marP)
 
-def plotMarginalP(marP, pN, minX, maxX, param_names):                     # Plot marginal P
-    import matplotlib.pyplot as plt
-    plt.clf()
-    for m in np.where(pN > 1)[0]:                            # Loop over axes
-        plt.figure(m, dpi=600)
-        im = np.array([*range(pN[m])]) + 0.5                 # Coords
-        X = minX[m] + (maxX[m]-minX[m])*im/pN[m]             # Param values
-        plt.plot(X, marP[m], label = param_names[m])
-        plt.xlim(minX[m], maxX[m])
-        plt.ylim(0,1)
-        plt.xlabel(param_names[m])
-        plt.ylabel("Prob.")
-        plt.legend(loc='best')
+def maxP(N,P,refs, minX, maxX):
+    pN = np.prod(refs, axis=0)
+    ind = indexGrid(N,refs)
+    X = paramGrid(ind, refs, minX, maxX)
+    print(X[np.argmax(P)])
+    print("P = {}".format(P[np.argmax(P)]))
+
+def cov_P(N,P,refs, minX, maxX):
+    global param_names
+    pN   = np.prod(refs, axis=0)
+    ind  = indexGrid(N, refs)
+    iterables = np.where(pN > 1)[0]
+    
+    for q in range(len(iterables)):
+        for r in range(q):
+            pID_1 = iterables[q]
+            pID_2 = iterables[r]
+            
+            cov_P = np.zeros((pN[pID_1], pN[pID_2]))
+            
+            for i in np.unique(ind[:,pID_1]):
+                for j in np.unique(ind[:,pID_2]):
+                    # q = P[np.where(np.logical_and(ind[:,pID_1] == i, ind[:,pID_2] == j))]
+                    cov_P[i,j] = P[np.where(np.logical_and(ind[:,pID_1] == i, ind[:,pID_2] == j))].sum()
+            
+            m = pID_1
+            im = np.array([*range(pN[m])]) + 0.5                 # Coords
+            X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+            X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
+            X = X1 * (1 - do_log[m]) + X2 * do_log[m]
+            cov_P = np.hstack((X.reshape((len(X),1)), cov_P))
+            
+            m = pID_2
+            im = np.array([*range(pN[m])]) + 0.5                 # Coords
+            X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+            X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
+            X = np.append(np.array([-1]), (X1 * (1 - do_log[m]) + X2 * do_log[m]), axis=0)
+            cov_P = np.vstack((X.reshape((1, len(X))), cov_P))
+            
+            print("Writing covariance file {} and {}".format(param_names[pID_1], param_names[pID_2]))
+            np.save(r"/home/cfai2304/super_bayes/" + experimental_data_filename +\
+                    "_BAYRES_" + param_names[pID_1] + "-" + param_names[pID_2] + ".npy", cov_P)
+    return
         
 def export_marginal_P(marP, pN, minX, maxX, param_names):
 
@@ -117,7 +147,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
             X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
             ## OVERRIDE: MAKE SRH TAUS EQUAL
-            #X[:,8]=X[:,7]
+            X[:,8]=X[:,7]
             plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1))
             for blk in range(0,len(X),GPU_GROUP_SIZE):
             
@@ -175,7 +205,7 @@ if __name__ == "__main__":
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
     T   = 2000                                # Time points
-    plT = 10                                  # Set PL interval (dt)
+    plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
     MAX = 500                                  # Max iterations
@@ -194,14 +224,14 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,32,1,1,16,16,1,16,8,1])
+    ref1 = np.array([1,32,1,1,32,32,1,32,1,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,1,1])
     ref3 = np.array([1,4,1,1,4,4,1,4,4,1])
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
 
     minX = np.array([1e8, 1e14, 10, 10, 1e-11, 1e2, 1e-6, 1, 1, 13.6**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e16, 10, 10, 1e-9, 1e4, 1e-6, 100, 100, 13.6**-1])
+    maxX = np.array([1e8, 1e17, 10, 10, 1e-9, 1e4, 1e-6, 100, 100, 13.6**-1])
 
     #minP = np.array([0, 0.01, 0.01])                 # Threshold P
     minP = np.array([0] + [0.00025 for i in range(len(refs) - 1)])
@@ -268,9 +298,9 @@ if __name__ == "__main__":
     N, P = bayes(pvSim, N, P, refs, minX, maxX, iniPar, simPar, minP, e_data)
     print("Bayesim took {} s".format(time.time() - clock0))
     marP = marginalP(N, P, refs)
-    #plotMarginalP(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
     export_marginal_P(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
-
+    cov_P(N, P, refs, minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1))
+    maxP(N, P, refs, minX *(unit_conversions ** -1) , maxX * (unit_conversions ** -1))
 
 
 

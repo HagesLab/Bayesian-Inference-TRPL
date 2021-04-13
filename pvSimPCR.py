@@ -255,7 +255,7 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG):
     a  *= dx3
     l  /= dx
     x   = np.arange(L) + 0.5
-    dN  = a*np.exp(-x/l)
+    dN  = a *np.exp(-x/l)
     N0, P0 = matPar[:,0:2].T
     N[:,0] = np.add.outer(N0, dN)
     P[:,0] = np.add.outer(P0, dN)
