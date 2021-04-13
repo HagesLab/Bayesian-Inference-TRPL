@@ -55,6 +55,19 @@ def modelErr(F, ref):
         pN *= ref[m]                           # Update counter
     return np.array(err)
 
+def modelErr2(F, ref):
+    N   = np.prod(ref)
+    pN = 1
+    err = []
+    for m in range(len(ref)):
+        dF  = 1.5*np.abs(F - np.roll(F, -pN, axis=0))	   # Absolute differences
+        dk  = ref[m]*pN                        # Step size
+        for n in range(pN):                    # Need pN passes
+            dF[dk-pN+n:N:dk] = 0               # Zero wrapped entries
+        err.append(np.amax(dF, axis=0))
+        pN *= ref[m]                           # Update counter
+    return np.array(err)
+
 
 def marginalP(N, P, refs):                                   # Marginal P's
     pN   = np.prod(refs, axis=0)
@@ -156,22 +169,30 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
                 else:
                     plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params)[1][-1]
 
-            Pbk = np.zeros(len(X)) # P's for block
             times, values, std = data
             
             # TODO: Match experimental data timesteps to model timesteps
             values = values[::sim_params[4]]
             std = std[::sim_params[4]]
+
+            Pbk = np.zeros(len(X)) # P's for block
+       
+            UNC_GROUP_SIZE = int(1e8 / len(N))     
+            for i in range(0, len(plI[0]), UNC_GROUP_SIZE):
+                sig = modelErr2(plI[:,i:i+UNC_GROUP_SIZE], refs[nref])
+                sg2 = 2*(np.amax(sig, axis=0)**2 + std[i:i+UNC_GROUP_SIZE]**2)
+                Pbk -= np.sum((plI[:,i:i+UNC_GROUP_SIZE]-values[i:i+UNC_GROUP_SIZE])**2 / sg2 + np.log(np.pi*sg2)/2, axis=1)
+            """
             for i in range(len(plI[0])):
                 F = plI[:,i]
                 sig  = modelErr(F, refs[nref])
                 sg2  = 2*(sig.max()**2 + std[i]**2)
                 Pbk -= (F-values[i])**2 / sg2 + np.log(np.pi*sg2)/2
-   
+            """
             lnP[n:n+Np] = Pbk
             
+            
         # TODO: Better normalization scheme
-        print(lnP)
         P = np.exp(lnP + 1000*np.log(2) - np.log(len(lnP)) - np.max(lnP))
         P  /= np.sum(P)                                      # Normalize P's
     return N, P
