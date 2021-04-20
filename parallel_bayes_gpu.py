@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 """
 Created on Mon Sep 21 21:33:18 2020
-
 @author: tladd
 """
 ## Define constants
@@ -58,15 +57,15 @@ def modelErr(F, ref):
 def modelErr2(F, ref):
     N   = np.prod(ref)
     pN = 1
-    err = []
+    err = np.zeros((len(ref), len(F[0])))
     for m in range(len(ref)):
         dF  = 1.5*np.abs(F - np.roll(F, -pN, axis=0))	   # Absolute differences
         dk  = ref[m]*pN                        # Step size
         for n in range(pN):                    # Need pN passes
             dF[dk-pN+n:N:dk] = 0               # Zero wrapped entries
-        err.append(np.amax(dF, axis=0))
+        err[m] = np.amax(dF, axis=0)
         pN *= ref[m]                           # Update counter
-    return np.array(err)
+    return err
 
 
 def marginalP(N, P, refs):                                   # Marginal P's
@@ -120,7 +119,7 @@ def cov_P(N,P,refs, minX, maxX):
             cov_P = np.vstack((X.reshape((1, len(X))), cov_P))
             
             print("Writing covariance file {} and {}".format(param_names[pID_1], param_names[pID_2]))
-            np.save(r"/home/cfai2304/super_bayes/" + experimental_data_filename +\
+            np.save(wdir + out_filename +\
                     "_BAYRES_" + param_names[pID_1] + "-" + param_names[pID_2] + ".npy", cov_P)
     return
         
@@ -134,7 +133,7 @@ def export_marginal_P(marP, pN, minX, maxX, param_names):
         X_log = minX[m] * (maxX[m]/minX[m])**((im)/pN[m])
         X =  X_lin * (1-do_log[m]) + X_log * do_log[m]
 
-        np.savetxt(r"/home/cfai2304/super_bayes/" + experimental_data_filename + "_BAYRES_" + param_names[m] + ".csv", np.vstack((X, marP[m])).T, delimiter=",")
+        np.savetxt(wdir + out_filename + "_BAYRES_" + param_names[m] + ".csv", np.vstack((X, marP[m])).T, delimiter=",")
 
     return        
 
@@ -161,7 +160,8 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
             ## OVERRIDE: MAKE SRH TAUS EQUAL
             X[:,8]=X[:,7]
-            plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1))
+            X[:,3]=X[:,2]
+            plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1), dtype=np.float32)
             for blk in range(0,len(X),GPU_GROUP_SIZE):
             
                 if has_GPU:
@@ -201,7 +201,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 #-----------------------------------------------------------------------------#
 import csv
 from numba import cuda
-
+import sys
 def get_data(exp_file, scale_f=1):
     with open(exp_file, newline='') as file:
         ifstream = csv.reader(file)
@@ -245,25 +245,26 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,32,1,1,32,32,1,32,1,1])
-    ref2 = np.array([1,1,1,1,16,16,1,16,1,1])
-    ref3 = np.array([1,4,1,1,4,4,1,4,4,1])
+    ref1 = np.array([1,8,1,1,1,8,1,8,1,1])
+    ref2 = np.array([1,16,16,1,16,16,1,16,1,1])
+    ref3 = np.array([1,2,2,1,2,2,1,2,1,1])
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e14, 10, 10, 1e-11, 1e2, 1e-6, 1, 1, 13.6**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 10, 10, 1e-9, 1e4, 1e-6, 100, 100, 13.6**-1])
+    minX = np.array([1e8, 1e14, 10, 10, 1e-10, 1e2, 1e-6, 1, 10, 13.6**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e17, 10, 10, 1e-10, 1e4, 1e-6, 100, 10, 13.6**-1])
 
     #minP = np.array([0, 0.01, 0.01])                 # Threshold P
-    minP = np.array([0] + [0.00025 for i in range(len(refs) - 1)])
+    minP = np.array([0] + [0.001 for i in range(len(refs) - 1)])
 
     N    = np.array([0])                              # Initial N
     P    = np.array([1.0])                            # Initial P
 
-    experimental_data_filename = "mid_noise pvSim_3312021_higherinj.csv"
+    wdir = r"/blue/c.hages/cfai2304/"
+    experimental_data_filename = sys.argv[1]
+    out_filename = sys.argv[2]
     
     # Pre-checks
-    from sys import exit
     try:
         num_params = len(param_names)
         assert (len(unit_conversions) == num_params), "Unit conversion array is missing entries"
@@ -288,7 +289,7 @@ if __name__ == "__main__":
         e_data = get_data(experimental_data_filename, scale_f=1e-37) # [carr/cm^2 s] to [carr/nm^2 ns]
         print("\nExperimental data - {}".format(experimental_data_filename))
         print(e_data)
-
+        print("Output: {}".format(out_filename))
         try:
             has_GPU = cuda.detect()
         except Exception:
@@ -309,7 +310,7 @@ if __name__ == "__main__":
         
     except Exception as oops:
         print(oops)
-        exit(0)
+        sys.exit(0)
         
     minX *= unit_conversions
     maxX *= unit_conversions
@@ -322,7 +323,3 @@ if __name__ == "__main__":
     export_marginal_P(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
     cov_P(N, P, refs, minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1))
     maxP(N, P, refs, minX *(unit_conversions ** -1) , maxX * (unit_conversions ** -1))
-
-
-
-
