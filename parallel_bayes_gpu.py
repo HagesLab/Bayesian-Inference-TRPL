@@ -245,17 +245,17 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,8,1,1,1,8,1,8,1,1])
+    ref1 = np.array([1,8,1,1,8,8,1,8,1,1])
     ref2 = np.array([1,16,16,1,16,16,1,16,1,1])
-    ref3 = np.array([1,2,2,1,2,2,1,2,1,1])
-    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
+    ref3 = np.array([1,2,1,1,2,2,1,2,1,1])
+    refs = np.array([ref1, ref3])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e14, 10, 10, 1e-10, 1e2, 1e-6, 1, 10, 13.6**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 10, 10, 1e-10, 1e4, 1e-6, 100, 10, 13.6**-1])
+    minX = np.array([1e8, 1e14, 10, 10, 1e-11, 1e2, 1e-6, 1, 10, 13.6**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e17, 10, 10, 1e-9, 1e4, 1e-6, 100, 10, 13.6**-1])
 
-    #minP = np.array([0, 0.01, 0.01])                 # Threshold P
-    minP = np.array([0] + [0.001 for i in range(len(refs) - 1)])
+    P_thr = float(np.prod(refs[0])) ** -1 * 0                 # Threshold P
+    minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
 
     N    = np.array([0])                              # Initial N
     P    = np.array([1.0])                            # Initial P
