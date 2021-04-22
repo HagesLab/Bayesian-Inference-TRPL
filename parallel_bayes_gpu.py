@@ -175,46 +175,67 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
         Np  = np.prod(refs[nref])                            # Params per set
         lnP = np.zeros(len(N))                               # Likelihoods
         print("ref level, N: ", nref, len(N))
+
+        X = np.empty((len(N), len(refs[0])))
         
         # TODO: Determine block size from GPU info instead of refinement?
         # Np cannot be modified! indexGrid assumes a certain value of Np
         for n in range(0, len(N), Np):                       # Loop over blks
             Nn  = N[n:n+Np]                                  # Cells block
             ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
-            X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
+            #X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
+            X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
+
+
             ## OVERRIDE: MAKE SRH TAUS EQUAL
-            X[:,8]=X[:,7]
-            X[:,3]=X[:,2]
-            plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1), dtype=np.float32)
-            for blk in range(0,len(X),GPU_GROUP_SIZE):
-            
-                if has_GPU:
-                    plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params, sim_params[2], num_SMs)[-1]
-                else:
-                    plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params)[1][-1]
+            #X[:,8]=X[:,7]
+            #X[:,3]=X[:,2]
 
-            times, values, std = data
-            
-            # TODO: Match experimental data timesteps to model timesteps
-            values = values[::sim_params[4]]
-            std = std[::sim_params[4]]
+        X[:,8] = X[:,7]
+        X[:,3] = X[:,2]
 
-            Pbk = np.zeros(len(X)) # P's for block
-       
-            UNC_GROUP_SIZE = int(1e8 / len(N))     
-            for i in range(0, len(plI[0]), UNC_GROUP_SIZE):
-                sig = modelErr2(plI[:,i:i+UNC_GROUP_SIZE], refs[nref])
-                sg2 = 2*(np.amax(sig, axis=0)**2 + std[i:i+UNC_GROUP_SIZE]**2)
-                Pbk -= np.sum((plI[:,i:i+UNC_GROUP_SIZE]-values[i:i+UNC_GROUP_SIZE])**2 / sg2 + np.log(np.pi*sg2)/2, axis=1)
-            """
+            #plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1), dtype=np.float32)
+
+        plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1), dtype=np.float32)
+
+        for blk in range(0,len(X),GPU_GROUP_SIZE):
+            
+            if has_GPU:
+                plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params, sim_params[2], num_SMs)[-1]
+            else:
+                plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params)[1][-1]
+
+        times, values, std = data
+            
+        # TODO: Match experimental data timesteps to model timesteps
+        values = values[::sim_params[4]]
+        std = std[::sim_params[4]]
+
+        Pbk = np.zeros(len(X)) # P's for block
+        for n in range(0, len(N), Np):
+            Pbk2 = Pbk[n:n+Np]
+            plI2 = plI[n:n+Np]
+            sig = modelErr2(plI2, refs[nref])
+            sg2 = 2*(np.amax(sig, axis=0)**2 + std**2)
+            Pbk2 -= np.sum((plI2-values)**2 / sg2 + np.log(np.pi*sg2)/2, axis=1)
+            lnP[n:n+Np] = Pbk2
+
+        """
+        UNC_GROUP_SIZE = int(1e8 / len(N))     
+        for i in range(0, len(plI[0]), UNC_GROUP_SIZE):
+            sig = modelErr2(plI[:,i:i+UNC_GROUP_SIZE], refs[nref])
+            sg2 = 2*(np.amax(sig, axis=0)**2 + std[i:i+UNC_GROUP_SIZE]**2)
+            Pbk -= np.sum((plI[:,i:i+UNC_GROUP_SIZE]-values[i:i+UNC_GROUP_SIZE])**2 / sg2 + np.log(np.pi*sg2)/2, axis=1)
+            
             for i in range(len(plI[0])):
                 F = plI[:,i]
                 sig  = modelErr(F, refs[nref])
                 sg2  = 2*(sig.max()**2 + std[i]**2)
                 Pbk -= (F-values[i])**2 / sg2 + np.log(np.pi*sg2)/2
-            """
-            lnP[n:n+Np] = Pbk
             
+        #lnP[n:n+Np] = Pbk
+        lnP = Pbk
+        """    
             
         # TODO: Better normalization scheme
         P = np.exp(lnP + 1000*np.log(2) - np.log(len(lnP)) - np.max(lnP))
@@ -272,7 +293,7 @@ if __name__ == "__main__":
     ref1 = np.array([1,16,1,1,16,16,1,16,1,1])
     ref2 = np.array([1,16,16,1,16,16,1,16,1,1])
     ref3 = np.array([1,2,1,1,2,2,1,2,1,1])
-    refs = np.array([ref1, ref3])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
 
     minX = np.array([1e8, 1e14, 10, 10, 1e-11, 1e2, 1e-6, 1, 10, 13.6**-1])                        # Smallest param v$
