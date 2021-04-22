@@ -137,16 +137,40 @@ def export_marginal_P(marP, pN, minX, maxX, param_names):
 
     return        
 
+def find_neighbors(N, nref, refs):
+    applied_refs = np.prod(refs[0:nref], axis=0) # not refs[0:nref+1], as #nref hasn't been applied yet
+    search_range = 1 # The maximum distance neighbors of parameter i can be
+    new_N = set(N) # set() can absorb duplicates at minimal cost
+    
+    for i in applied_refs:
+        if i > 1:
+            og_range = search_range # How far away neighbors of parameter i are expected to be
+            search_range *= i # Size of neighborhood where parameter i+1 is constant.
+            for n in N:
+                # Exceeding this means parameter i was a boundary value i.e. has only one neighbor
+                min_N = n - n % search_range
+                max_N = min_N + search_range - 1
+                
+                new_n = n - og_range
+                if new_n >= min_N: new_N.add(new_n)
+                
+                new_n = n + og_range
+                if new_n <= max_N: new_N.add(new_n)
+                
+    new_N = list(new_N)
+    return np.array(new_N, dtype=np.int32)
+
 def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):        # Driver function
     global num_SMs
     global has_GPU
+    global include_neighbors
     global GPU_GROUP_SIZE
     for nref in range(len(refs)):                            # Loop refinements
-        #while not any(P > minP[nref]):
-        #    print("Warning: prob. grid too diffuse for minP {}".format(minP[nref]))
-        #    minP[nref] /= 2
-        #    print("Retrying with minP {}".format(minP[nref]))
         N   = N[np.where(P > minP[nref])]                    # P < minP
+
+        if nref > 0 and include_neighbors:
+            N = find_neighbors(N, nref, refs)
+
         N   = refineGrid(N, refs[nref])                      # Refine grid
         Np  = np.prod(refs[nref])                            # Params per set
         lnP = np.zeros(len(N))                               # Likelihoods
@@ -245,7 +269,7 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,8,1,1,8,8,1,8,1,1])
+    ref1 = np.array([1,16,1,1,16,16,1,16,1,1])
     ref2 = np.array([1,16,16,1,16,16,1,16,1,1])
     ref3 = np.array([1,2,1,1,2,2,1,2,1,1])
     refs = np.array([ref1, ref3])#, ref2, ref3])                         # Refinements
@@ -254,7 +278,8 @@ if __name__ == "__main__":
     minX = np.array([1e8, 1e14, 10, 10, 1e-11, 1e2, 1e-6, 1, 10, 13.6**-1])                        # Smallest param v$
     maxX = np.array([1e8, 1e17, 10, 10, 1e-9, 1e4, 1e-6, 100, 10, 13.6**-1])
 
-    P_thr = float(np.prod(refs[0])) ** -1 * 0                 # Threshold P
+    include_neighbors = True
+    P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
 
     N    = np.array([0])                              # Initial N
