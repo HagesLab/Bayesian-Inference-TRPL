@@ -42,9 +42,7 @@ def pcreduce(ld, d, ud, B, c, buffer, TPB):
 
     thr = cuda.threadIdx.x
     while N / rf > 2:
-
         for i in range(thr, N, TPB):
-
             buffer[i] = ld[i]
             buffer[i+N] = d[i]
             buffer[i+2*N] = ud[i]
@@ -52,15 +50,12 @@ def pcreduce(ld, d, ud, B, c, buffer, TPB):
 
         cuda.syncthreads() # Prevent race condition
         for i in range(thr, N, TPB):
-
-                
             if i >= rf:
                 k1 = buffer[i] / buffer[i+N-rf]
                 d[i] -= buffer[i+2*N-rf]*k1
                 ld[i] = -buffer[i-rf] * k1
                 B[i] -= buffer[i+3*N-rf]*k1
 
-                
             if i < (N - rf):
                 k2 = buffer[i+2*N] / buffer[i+N+rf]
                 d[i] -= buffer[i+rf]*k2
@@ -68,9 +63,7 @@ def pcreduce(ld, d, ud, B, c, buffer, TPB):
                 B[i] -= buffer[i+3*N+rf]*k2
         
         cuda.syncthreads()
-
         rf *= 2
-
     
     # Solve    
     for i in range(thr, rf, TPB):
@@ -188,8 +181,8 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
 
     for t in range(T+1):                            # Outer time loop
     #for t in range(1):
-        if t%100 ==0 and cuda.grid(1) == 0:
-            print('time: ', t)
+        #if t%100 ==0 and cuda.grid(1) == 0:
+        #    print('time: ', t)
         if t == 0:                                  # Select integration order
             a0 = 1.0; a1 = -1.0; a2 = 0.0           # Euler step
         else:
@@ -206,9 +199,9 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
             if p < len(matPar): #and p == 1640:
                 iters = iterate(N[p], P[p], E[p], matPar[p], par)
                 if iters >= MAX:
-                    print('NO CONVERGENCE: ', \
-                          'Block ', p, 'simtime ', t, iters, ' iterations')
-                    #break
+                    #print('NO CONVERGENCE: ', \
+                    #      'Block ', p, 'simtime ', t, iters, ' iterations')
+                    break
                 if t%plT == 0:
                     Sum = 0
                     for n in range(L):
@@ -222,8 +215,8 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
         if t == pT[ind]:  ind += 1
                     
 
-def pvSim(matPar, simPar, iniPar, TPB, BPG):
-
+def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
+    print("Solver called")
     # Unpack local parameters
     Length, Time, L, T, plT, pT, tol, MAX = simPar
     dx = Length/L
@@ -242,54 +235,70 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG):
 
     # Allocate arrays for each thread
     Threads = len(matPar)                      # Number of threads on GPU
-    N   = np.zeros((Threads,3,L))              # Include prior steps and iter
-    P   = np.zeros((Threads,3,L))
-    E   = np.zeros((Threads,3,L+1))
-    plI = np.zeros((Threads,T//plT+1))         # Arrays for plotting
-    plN = np.zeros((Threads,len(pT),L))
-    plP = np.zeros((Threads,len(pT),L))
-    plE = np.zeros((Threads,len(pT),L+1))
 
-    # Initialization - nodes at 1/2, 3/2 ... L-1/2
-    a,l = iniPar
-    a  *= dx3
-    l  /= dx
-    x   = np.arange(L) + 0.5
-    dN  = a *np.exp(-x/l)
-    N0, P0 = matPar[:,0:2].T
-    N[:,0] = np.add.outer(N0, dN)
-    P[:,0] = np.add.outer(P0, dN)
+
+    plI_main = np.zeros((Threads,(T//plT+1) * len(iniPar)))         # Arrays for plotting
+    count = 0
+    for ic in iniPar:
+
+        N   = np.zeros((Threads,3,L))              # Include prior steps and iter
+        P   = np.zeros((Threads,3,L))
+        E   = np.zeros((Threads,3,L+1))
+        plN = np.zeros((Threads,len(pT),L))
+        plP = np.zeros((Threads,len(pT),L))
+        plE = np.zeros((Threads,len(pT),L+1))
+        plI = np.zeros((Threads,T//plT+1))
+
+        if init_mode == "exp":
+
+            # Initialization - nodes at 1/2, 3/2 ... L-1/2
+            a,l = ic
+            a  *= dx3
+            l  /= dx
+            x   = np.arange(L) + 0.5
+            dN  = a *np.exp(-x/l)
     
-    clock0 = time.time()
-    devN = cuda.to_device(N)
-    devP = cuda.to_device(P)
-    devE = cuda.to_device(E)
-    devpN = cuda.to_device(plN)
-    devpP = cuda.to_device(plP)
-    devpE = cuda.to_device(plE)
-    devpI = cuda.to_device(plI)
-    devm = cuda.to_device(matPar)
-    devs = cuda.to_device(simPar)
-    print("Loading data took {} sec".format(time.time() - clock0))
+        elif init_mode == "points":
+            dN = ic * dx3
+        print("****dN****")
+        print(count)
+
+        N0, P0 = matPar[:,0:2].T
+        N[:,0] = np.add.outer(N0, dN)
+        P[:,0] = np.add.outer(P0, dN)
+    
+        clock0 = time.time()
+        devN = cuda.to_device(N)
+        devP = cuda.to_device(P)
+        devE = cuda.to_device(E)
+        devpN = cuda.to_device(plN)
+        devpP = cuda.to_device(plP)
+        devpE = cuda.to_device(plE)
+        devpI = cuda.to_device(plI)
+        devm = cuda.to_device(matPar)
+        devs = cuda.to_device(simPar)
+        print("Loading data took {} sec".format(time.time() - clock0))
    
-    clock0 = time.time()
-    tEvol[BPG,TPB](devN, devP, devE, devpN, devpP, devpE, devpI, devm, devs)
-    cuda.synchronize()
-    print("tEvol took {} sec".format(time.time() - clock0))
+        clock0 = time.time()
+        tEvol[BPG,TPB](devN, devP, devE, devpN, devpP, devpE, devpI, devm, devs)
+        cuda.synchronize()
+        print("tEvol took {} sec".format(time.time() - clock0))
     
-    clock0 = time.time()
-    plI = devpI.copy_to_host()
-    plN = devpN.copy_to_host()
-    plP = devpP.copy_to_host()
-    plE = devpE.copy_to_host()
-    print("Copy back took {} sec".format(time.time() - clock0))
+        clock0 = time.time()
+        plI = devpI.copy_to_host()
+        plN = devpN.copy_to_host()
+        plP = devpP.copy_to_host()
+        plE = devpE.copy_to_host()
+        print("Copy back took {} sec".format(time.time() - clock0))
+        plI_main[:, (T//plT+1)*count:(T//plT+1)*(count+1)] = plI
+        count += 1
 
-    plI /= dx**2*dt
+    plI_main /= dx**2*dt
     plN /= dx**3
     plP /= dx**3
     plE /= dx
 
-    return (plN, plP, plE, plI)
+    return (plN, plP, plE, plI_main)
 
 if __name__ == "__main__":
 

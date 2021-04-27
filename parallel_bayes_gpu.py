@@ -163,7 +163,7 @@ def find_neighbors(N, nref, refs):
 def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):        # Driver function
     global num_SMs
     global has_GPU
-    global include_neighbors
+    global include_neighbors, init_mode
     global GPU_GROUP_SIZE
     for nref in range(len(refs)):                            # Loop refinements
         N   = N[np.where(P > minP[nref])]                    # P < minP
@@ -191,20 +191,19 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             #X[:,8]=X[:,7]
             #X[:,3]=X[:,2]
 
-        X[:,8] = X[:,7]
+        #X[:,8] = X[:,7]
         X[:,3] = X[:,2]
 
             #plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1), dtype=np.float32)
 
-        plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1), dtype=np.float32)
+        plI = np.empty((len(X), len(init_params) *(sim_params[3] // sim_params[4] + 1)), dtype=np.float32)
 
         for blk in range(0,len(X),GPU_GROUP_SIZE):
             
             if has_GPU:
-                plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params, sim_params[2], num_SMs)[-1]
+                plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params, sim_params[2], num_SMs, init_mode=init_mode)[-1]
             else:
                 plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params)[1][-1]
-
         times, values, std = data
             
         # TODO: Match experimental data timesteps to model timesteps
@@ -264,13 +263,23 @@ def get_data(exp_file, scale_f=1):
     uncertainty = np.array(uncertainty) * scale_f
     return (t, PL, uncertainty)
 
+def get_initpoints(init_file, scale_f=1e-21):
+    with open(init_file, newline='') as file:
+        ifstream = csv.reader(file)
+        initpoints = []
+        for row in ifstream:
+            assert len(row) == L, "Error: length of initial condition does not match simPar: L\n IC:{}, L:{}".format(len(row), L)
+            initpoints.append(row)
+
+    return np.array(initpoints, dtype=float) * scale_f
+
 if __name__ == "__main__":
     # simPar
-    Time    = 50                             # Final time (ns)
-    Length  = 1500                            # Length (nm)
+    Time    = 250                             # Final time (ns)
+    Length  = 2000                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
-    T   = 2000                                # Time points
+    T   = 1000                                # Time points
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
@@ -278,11 +287,15 @@ if __name__ == "__main__":
     pT = tuple(np.array(pT)*T//100)
     simPar = (Length, Time, L, T, plT, pT, tol, MAX)
     
-    # iniPar
+    # iniPar and available modes
+    # 'exp' - parameters a and l for a*np.exp(-x/l)
+    # 'points' - direct list of dN [cm^-3] points as csv file read using get_initpoints()
+    init_mode = "points"
     a  = 1e18/(1e7)**3                        # Amplitude
     l  = 100                                  # Length scale [nm]
-    iniPar = (a, l)
-    
+    #iniPar = np.array([[a, l]])
+    iniPar = get_initpoints("inits.csv")
+
     # This code follows a strict order of parameters:
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda]
     param_names = ["n0", "p0", "mu_n", "mu_p", "B", "Sf", "Sb", "tau_n", "tau_p", "rel. permitivity^-1"]
@@ -290,14 +303,14 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,16,1,1,16,16,1,16,1,1])
-    ref2 = np.array([1,16,16,1,16,16,1,16,1,1])
+    ref1 = np.array([1,32,1,1,32,32,1,32,1,1])
+    ref2 = np.array([1,16,1,1,16,16,1,16,16,1])
     ref3 = np.array([1,2,1,1,2,2,1,2,1,1])
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e14, 10, 10, 1e-11, 1e2, 1e-6, 1, 10, 13.6**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 10, 10, 1e-9, 1e4, 1e-6, 100, 10, 13.6**-1])
+    minX = np.array([1e8, 1e14, 10, 10, 1e-11, 1e3, 1e-6, 1, 20, 13.6**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e17, 10, 10, 1e-9, 2e5, 1e-6, 100, 20, 13.6**-1])
 
     include_neighbors = True
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
@@ -332,7 +345,7 @@ if __name__ == "__main__":
         print("Refinement levels:")
         for i in range(num_params):
             print("{}: {}".format(param_names[i], refs[:,i]))        
-        e_data = get_data(experimental_data_filename, scale_f=1e-37) # [carr/cm^2 s] to [carr/nm^2 ns]
+        e_data = get_data(experimental_data_filename, scale_f=1e-37) # [carr/cm^2 s] to [carr/nm^2 ns] 
         print("\nExperimental data - {}".format(experimental_data_filename))
         print(e_data)
         print("Output: {}".format(out_filename))
