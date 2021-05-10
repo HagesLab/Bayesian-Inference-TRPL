@@ -41,19 +41,6 @@ def refineGrid (N, ref):                       # Refine grid
     N   = np.add.outer(reN, N*siz)             # 2D array of indexes
     return N.flatten(order='F')                # Return flattened array
 
-def modelErr(F, ref):
-    N   = np.prod(ref)
-    pN = 1
-    err = []
-    for m in range(len(ref)):
-        dF  = 1.5*np.abs(F - np.roll(F, -pN))      # Absolute differences
-        dk  = ref[m]*pN                        # Step size
-        for n in range(pN):                    # Need pN passes
-            dF[dk-pN+n:N:dk] = 0               # Zero wrapped entries
-        err.append(dF.max())
-        pN *= ref[m]                           # Update counter
-    return np.array(err)
-
 def modelErr2(F, ref):
     N   = np.prod(ref)
     pN = 1
@@ -192,7 +179,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             #X[:,3]=X[:,2]
 
         #X[:,8] = X[:,7]
-        X[:,3] = X[:,2]
+        #X[:,3] = X[:,2]
 
             #plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1), dtype=np.float32)
 
@@ -201,11 +188,14 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
         for blk in range(0,len(X),GPU_GROUP_SIZE):
             
             if has_GPU:
-                plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params, sim_params[2], num_SMs, init_mode=init_mode)[-1]
+                plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params, TPB, num_SMs, init_mode=init_mode)[-1]
             else:
                 plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params)[1][-1]
         times, values, std = data
             
+        if LOG_PL:
+            plI[plI<bval] = bval
+            plI = np.log(plI)
         # TODO: Match experimental data timesteps to model timesteps
         values = values[::sim_params[4]]
         std = std[::sim_params[4]]
@@ -261,6 +251,11 @@ def get_data(exp_file, scale_f=1):
     
     PL = np.array(PL) * scale_f
     uncertainty = np.array(uncertainty) * scale_f
+  
+    if LOG_PL:
+        PL += bval
+        uncertainty /= PL
+        PL = np.log(PL)
     return (t, PL, uncertainty)
 
 def get_initpoints(init_file, scale_f=1e-21):
@@ -303,15 +298,17 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,32,1,1,32,32,1,32,1,1])
-    ref2 = np.array([1,16,1,1,16,16,1,16,16,1])
+    ref1 = np.array([1,1,1,1,32,32,1,32,32,1])
+    ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref3 = np.array([1,2,1,1,2,2,1,2,1,1])
-    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref2])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e14, 10, 10, 1e-11, 1e3, 1e-6, 1, 20, 13.6**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 10, 10, 1e-9, 2e5, 1e-6, 100, 20, 13.6**-1])
+    minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 13.6**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 13.6**-1])
 
+    LOG_PL = True
+    bval = 1e-10
     include_neighbors = True
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
@@ -357,6 +354,7 @@ if __name__ == "__main__":
         if has_GPU: 
             device = cuda.get_current_device()
             num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
+            TPB = 2 ** 7
             from pvSimPCR import pvSim
         else:
             print("No GPU detected - reverting to CPU simulation")

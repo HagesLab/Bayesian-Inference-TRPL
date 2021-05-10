@@ -170,7 +170,6 @@ def iterate(N, P, E, matPar, par):
 
 @cuda.jit(device=False)
 def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
-
     L, T, tol, MAX, TPB, BPG, plT = simPar[:7]
     pT   = simPar[7:]
     N0   = matPar[:,0]
@@ -191,29 +190,42 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
         k   = (t)  %3                               # current time
         ko  = (t-1)%3                               # old time
         par = (a0, a1, a2, k, kp, ko, L, tol, MAX, TPB)
-        for blk in range((len(matPar)+BPG-1)//BPG): # Loop over blocks
+        for p in range(cuda.blockIdx.x, len(matPar), BPG): # Use blocks to look over param sets
         #for blk in range(1):
             #if t==0 and cuda.grid(1) == 0:
             #    print('block', blk, 'Starting p: ', blk*BPG)
-            p = blk*BPG + cuda.blockIdx.x           # Param set
-            if p < len(matPar): #and p == 1640:
-                iters = iterate(N[p], P[p], E[p], matPar[p], par)
-                if iters >= MAX:
-                    #print('NO CONVERGENCE: ', \
-                    #      'Block ', p, 'simtime ', t, iters, ' iterations')
-                    break
-                if t%plT == 0:
-                    Sum = 0
-                    for n in range(L):
-                        Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
-                    plI[p,t//plT] = rate[p]*Sum
-                if t == pT[ind]:
-                    for n in range(L):
-                        plN[p,ind,n] = N[p,k,n] 
-                        plP[p,ind,n] = P[p,k,n]
-                        plE[p,ind,n] = E[p,k,n]
-        if t == pT[ind]:  ind += 1
-                    
+
+            iters = iterate(N[p], P[p], E[p], matPar[p], par)
+            if iters >= MAX:
+                #print('NO CONVERGENCE: ', \
+                #      'Block ', p, 'simtime ', t, iters, ' iterations')
+                break
+            if t%plT == 0:
+                Sum = 0
+                for n in range(L):
+                    Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
+                plI[p,t//plT] = rate[p]*Sum
+
+            # Record specified timesteps, for debug mode
+            #if t == pT[ind]:
+            #    for n in range(L):
+            #        plN[p,ind,n] = N[p,k,n] 
+            #        plP[p,ind,n] = P[p,k,n]
+            #        plE[p,ind,n] = E[p,k,n]
+        #if t == pT[ind]:  ind += 1
+    # Record last two timesteps
+    th = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+    for p in range(th,len(N), cuda.gridsize(1)):
+        for n in range(len(N[0,0])):
+            plN[p,1,n] = N[p,k,n]
+            plN[p,0,n] = N[p,ko,n] 
+            plP[p,1,n] = P[p,k,n]
+            plP[p,0,n] = P[p,ko,n]
+
+        for n in range(len(E[0,0])):
+            plE[p,1,n] = E[p,k,n]
+            plE[p,0,n] = E[p,ko,n]
+          
 
 def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
     print("Solver called")
@@ -223,7 +235,7 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
     dt = Time/T
     simPar = (L, T, tol, MAX, TPB, BPG, plT, *pT)
     global SIZ 
-    SIZ = TPB
+    SIZ = L
     global BuSIZ
     BuSIZ = int(SIZ)*4
 
@@ -244,10 +256,13 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
         N   = np.zeros((Threads,3,L))              # Include prior steps and iter
         P   = np.zeros((Threads,3,L))
         E   = np.zeros((Threads,3,L+1))
-        plN = np.zeros((Threads,len(pT),L))
-        plP = np.zeros((Threads,len(pT),L))
-        plE = np.zeros((Threads,len(pT),L+1))
+        #plN = np.zeros((Threads,len(pT),L))
+        #plP = np.zeros((Threads,len(pT),L))
+        #plE = np.zeros((Threads,len(pT),L+1))
         plI = np.zeros((Threads,T//plT+1))
+        plN = np.zeros((Threads, 2, L))
+        plP = np.zeros((Threads, 2, L))
+        plE = np.zeros((Threads, 2, L+1))
 
         if init_mode == "exp":
 
@@ -260,8 +275,6 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
     
         elif init_mode == "points":
             dN = ic * dx3
-        print("****dN****")
-        print(count)
 
         N0, P0 = matPar[:,0:2].T
         N[:,0] = np.add.outer(N0, dN)
@@ -292,12 +305,12 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
         print("Copy back took {} sec".format(time.time() - clock0))
         plI_main[:, (T//plT+1)*count:(T//plT+1)*(count+1)] = plI
         count += 1
-
+    # Re-dimensionalize
     plI_main /= dx**2*dt
     plN /= dx**3
     plP /= dx**3
     plE /= dx
-
+    print(plN)
     return (plN, plP, plE, plI_main)
 
 if __name__ == "__main__":
