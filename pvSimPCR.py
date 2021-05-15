@@ -197,9 +197,18 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
 
             iters = iterate(N[p], P[p], E[p], matPar[p], par)
             if iters >= MAX:
-                #print('NO CONVERGENCE: ', \
-                #      'Block ', p, 'simtime ', t, iters, ' iterations')
+                if cuda.threadIdx.x == 0:
+                    print('NO CONVERGENCE: ', \
+                      'Block ', p, 'simtime ', t, iters, ' iterations')
                 break
+            
+            if t%plT == 0:
+                Sum = 0
+                for n in range(L):
+                    Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
+                plI[p,t//plT] = rate[p]*Sum
+
+            
 
             # Record specified timesteps, for debug mode
             #if t == pT[ind]:
@@ -208,6 +217,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
             #        plP[p,ind,n] = P[p,k,n]
             #        plE[p,ind,n] = E[p,k,n]
         #if t == pT[ind]:  ind += 1
+        """
         cuda.syncthreads()
         if t%plT == 0:
             for p in range(cuda.grid(1), len(matPar), cuda.gridsize(1)):
@@ -216,7 +226,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
                     Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
                 plI[p,t//plT] = rate[p]*Sum
             cuda.syncthreads()
-
+        """
     # Record last two timesteps
     th = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
     for p in range(th,len(N), cuda.gridsize(1)):

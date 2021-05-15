@@ -197,8 +197,6 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             plI[plI<bval] = bval
             plI = np.log(plI)
         # TODO: Match experimental data timesteps to model timesteps
-        values = values[::sim_params[4]]
-        std = std[::sim_params[4]]
 
         Pbk = np.zeros(len(X)) # P's for block
         for n in range(0, len(N), Np):
@@ -274,8 +272,8 @@ if __name__ == "__main__":
     Length  = 2000                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
-    T   = 1000                                # Time points
-    plT = 1                                  # Set PL interval (dt)
+    T   = 4000                                # Time points
+    plT = 4                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
     MAX = 500                                  # Max iterations
