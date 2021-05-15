@@ -200,11 +200,6 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
                 #print('NO CONVERGENCE: ', \
                 #      'Block ', p, 'simtime ', t, iters, ' iterations')
                 break
-            if t%plT == 0:
-                Sum = 0
-                for n in range(L):
-                    Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
-                plI[p,t//plT] = rate[p]*Sum
 
             # Record specified timesteps, for debug mode
             #if t == pT[ind]:
@@ -213,6 +208,15 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
             #        plP[p,ind,n] = P[p,k,n]
             #        plE[p,ind,n] = E[p,k,n]
         #if t == pT[ind]:  ind += 1
+        cuda.syncthreads()
+        if t%plT == 0:
+            for p in range(cuda.grid(1), len(matPar), cuda.gridsize(1)):
+                Sum = 0
+                for n in range(L):
+                    Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
+                plI[p,t//plT] = rate[p]*Sum
+            cuda.syncthreads()
+
     # Record last two timesteps
     th = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
     for p in range(th,len(N), cuda.gridsize(1)):
@@ -310,7 +314,7 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
     plN /= dx**3
     plP /= dx**3
     plE /= dx
-    print(plN)
+    print(plI_main)
     return (plN, plP, plE, plI_main)
 
 if __name__ == "__main__":
