@@ -184,26 +184,29 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             #plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1), dtype=np.float32)
 
         plI = np.empty((len(X), len(init_params) *(sim_params[3] // sim_params[4] + 1)), dtype=np.float32)
-
+        
         for blk in range(0,len(X),GPU_GROUP_SIZE):
             
             if has_GPU:
                 plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params, TPB, num_SMs, init_mode=init_mode)[-1]
             else:
                 plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params)[1][-1]
+        
         times, values, std = data
             
         if LOG_PL:
             plI[plI<bval] = bval
             plI = np.log(plI)
         # TODO: Match experimental data timesteps to model timesteps
-
+        sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI - values) ** 2, axis=0)
         Pbk = np.zeros(len(X)) # P's for block
         for n in range(0, len(N), Np):
             Pbk2 = Pbk[n:n+Np]
             plI2 = plI[n:n+Np]
-            sig = modelErr2(plI2, refs[nref])
-            sg2 = 2*(np.amax(sig, axis=0)**2 + std**2)
+            #sig = modelErr2(plI2, refs[nref])
+            #sg2 = 2*(np.amax(sig, axis=0)**2 + std**2)
+            #sg2 = 2 * (sig_sq + std ** 2)
+            sg2 = 2 * sig_sq
             Pbk2 -= np.sum((plI2-values)**2 / sg2 + np.log(np.pi*sg2)/2, axis=1)
             lnP[n:n+Np] = Pbk2
 
@@ -298,6 +301,7 @@ if __name__ == "__main__":
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
     ref1 = np.array([1,1,1,1,32,32,1,32,32,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
+    ref4 = np.array([1,1,1,1,16,16,1,16,1,1])
     ref3 = np.array([1,2,1,1,2,2,1,2,1,1])
     refs = np.array([ref2])#, ref2, ref3])                         # Refinements
     
@@ -306,7 +310,7 @@ if __name__ == "__main__":
     maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 13.6**-1])
 
     LOG_PL = True
-    bval = 1e-10
+    bval = 1e-30
     include_neighbors = True
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])

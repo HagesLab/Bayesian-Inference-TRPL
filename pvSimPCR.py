@@ -169,7 +169,7 @@ def iterate(N, P, E, matPar, par):
     return iters+1
 
 @cuda.jit(device=False)
-def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
+def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, race):
     L, T, tol, MAX, TPB, BPG, plT = simPar[:7]
     pT   = simPar[7:]
     N0   = matPar[:,0]
@@ -177,7 +177,6 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
     rate = matPar[:,4]
 
     ind  = 0
-
     for t in range(T+1):                            # Outer time loop
     #for t in range(1):
         #if t%100 ==0 and cuda.grid(1) == 0:
@@ -194,6 +193,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
         #for blk in range(1):
             #if t==0 and cuda.grid(1) == 0:
             #    print('block', blk, 'Starting p: ', blk*BPG)
+            race[p] += 1
 
             iters = iterate(N[p], P[p], E[p], matPar[p], par)
             if iters >= MAX:
@@ -201,13 +201,13 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
                     print('NO CONVERGENCE: ', \
                       'Block ', p, 'simtime ', t, iters, ' iterations')
                 break
-            
+            """
             if t%plT == 0:
                 Sum = 0
                 for n in range(L):
                     Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
                 plI[p,t//plT] = rate[p]*Sum
-
+            """
             
 
             # Record specified timesteps, for debug mode
@@ -217,7 +217,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
             #        plP[p,ind,n] = P[p,k,n]
             #        plE[p,ind,n] = E[p,k,n]
         #if t == pT[ind]:  ind += 1
-        """
+        
         cuda.syncthreads()
         if t%plT == 0:
             for p in range(cuda.grid(1), len(matPar), cuda.gridsize(1)):
@@ -226,7 +226,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar):
                     Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
                 plI[p,t//plT] = rate[p]*Sum
             cuda.syncthreads()
-        """
+        
     # Record last two timesteps
     th = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
     for p in range(th,len(N), cuda.gridsize(1)):
@@ -305,9 +305,10 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
         devm = cuda.to_device(matPar)
         devs = cuda.to_device(simPar)
         print("Loading data took {} sec".format(time.time() - clock0))
-   
+        race = np.zeros(len(matPar))
+        drace = cuda.to_device(race)
         clock0 = time.time()
-        tEvol[BPG,TPB](devN, devP, devE, devpN, devpP, devpE, devpI, devm, devs)
+        tEvol[BPG,TPB](devN, devP, devE, devpN, devpP, devpE, devpI, devm, devs, drace)
         cuda.synchronize()
         print("tEvol took {} sec".format(time.time() - clock0))
     
@@ -317,6 +318,8 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
         plP = devpP.copy_to_host()
         plE = devpE.copy_to_host()
         print("Copy back took {} sec".format(time.time() - clock0))
+        race = drace.copy_to_host()
+        print(list(race))
         plI_main[:, (T//plT+1)*count:(T//plT+1)*(count+1)] = plI
         count += 1
     # Re-dimensionalize
@@ -324,7 +327,7 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
     plN /= dx**3
     plP /= dx**3
     plE /= dx
-    print(plI_main)
+    #print(plI_main)
     return (plN, plP, plE, plI_main)
 
 if __name__ == "__main__":
