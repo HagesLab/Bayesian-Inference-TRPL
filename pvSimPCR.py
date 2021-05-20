@@ -101,21 +101,32 @@ def iterate(N, P, E, matPar, par, p, t):
         bN[n] = a1*Nk[n] + a2*N[ko,n]
         bP[n] = a1*Pk[n] + a2*P[ko,n]
         bE[n] = a1*Ek[n] + a2*E[ko,n]
+
+    A0[-1] = 0
+    A2[0] = 0
+
     cuda.syncthreads()
-    #if p == 1 and t == 0:
-    #    if cuda.threadIdx.x == 0:
-    #        print("Pk[n]")
-    #    
-    #    print(Pk[th])
-    #
-    #cuda.syncthreads()
 # Iterate outer loop to convergence
     for iters in range(MAX):                    # Up to MAX iterations
+        #if p == 1 and t == 0 and iters == 0:
+        #    if th == 0: 
+        #        print("A0[L-1] before")
+        #        print(A0[L-1])
+        #        print("A2 before")
+        #    print(A2[th])
+        #cuda.syncthreads()
 
         for n in range(1+th, L, TPB):           # Solve for N
             A0[n-1]   = DN*(-Ek[n]/2 - 1)
             A2[n] = DN*(+Ek[n]/2 - 1)
         cuda.syncthreads()
+        #if p == 1 and t == 0 and iters == 0:
+        #    if th == 0: 
+        #        print("A0[L-1] after")
+        #        print(A0[-1])
+        #        print("A2 after")
+        #    print(A2[th])
+        #cuda.syncthreads()
         for n in range(th, L, TPB):
             np = Nk[n]*Pk[n] - N0*P0
             tp = Nk[n]*tauP + Pk[n]*tauN
@@ -173,6 +184,13 @@ def iterate(N, P, E, matPar, par, p, t):
         P[kp,n] = Pk[n]
         E[kp,n] = Ek[n]
     cuda.syncthreads()
+    #if t == 0 and p == 1:                
+    #   if th == 0: 
+    #       print("Iters=")
+    #       print(iters)
+    #cuda.syncthreads()
+
+
     return iters+1
 
 @cuda.jit(device=False)
@@ -185,7 +203,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, race):
 
     ind  = 0
     for t in range(T+1):                            # Outer time loop
-    #for t in range(1000):
+    #for t in range(10):
         #if t%100 ==0 and cuda.grid(1) == 0:
         #    print('time: ', t)
         if t == 0:                                  # Select integration order
@@ -212,8 +230,8 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, race):
             #    print(k)
             #    print("iters")
             #    print(iters)
-            #    print("N[p,k,0]:")
-            #    print(N[p,k,0])
+            #    print("N[p,kp,0]:")
+            #    print(N[p,kp,0])
             cuda.syncthreads()
             #else: iters = 0
             if iters >= MAX:
@@ -227,8 +245,8 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, race):
                 #if t == 0 and p == 1 and cuda.threadIdx.x == 0:
                 #    print("k again:")
                 #    print(k)
-                #    print("N[p,k,0]")
-                #    print(N[p,k,0])
+                #    print("N[p,kp,0]")
+                #    print(N[p,kp,0])
                 #cuda.syncthreads()
                 for n in range(L):
                     Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
