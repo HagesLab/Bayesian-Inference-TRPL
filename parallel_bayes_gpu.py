@@ -193,7 +193,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
                 plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params)[1][-1]
         
         times, values, std = data
-            
+        #sys.exit()    
         if LOG_PL:
             plI[plI<bval] = bval
             plI = np.log(plI)
@@ -275,8 +275,8 @@ if __name__ == "__main__":
     Length  = 2000                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
-    T   = 4000                                # Time points
-    plT = 4                                  # Set PL interval (dt)
+    T   = 8000                                # Time points
+    plT = 8                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
     MAX = 500                                  # Max iterations
@@ -302,15 +302,15 @@ if __name__ == "__main__":
     ref1 = np.array([1,1,1,1,32,32,1,32,32,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,16,16,1,16,1,1])
-    ref3 = np.array([1,2,1,1,2,2,1,2,1,1])
-    refs = np.array([ref2])#, ref2, ref3])                         # Refinements
+    ref3 = np.array([1,16,1,1,16,16,1,16,16,1])
+    refs = np.array([ref4])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 13.6**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 13.6**-1])
+    minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 20, 13.6**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 20, 13.6**-1])
 
     LOG_PL = True
-    bval = 1e-30
+    bval = 1e-10
     include_neighbors = True
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
@@ -378,7 +378,16 @@ if __name__ == "__main__":
     clock0 = time.time()
     N, P = bayes(pvSim, N, P, refs, minX, maxX, iniPar, simPar, minP, e_data)
     print("Bayesim took {} s".format(time.time() - clock0))
-    marP = marginalP(N, P, refs)
-    export_marginal_P(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
-    cov_P(N, P, refs, minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1))
+    try:
+        print("Writing to /blue:")
+        marP = marginalP(N, P, refs)
+        export_marginal_P(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
+        cov_P(N, P, refs, minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1))
+    except:
+        print("Write failed; rewriting to backup location /home:")
+        wdir = r"/home/cfai2304/super_bayes/"
+        marP = marginalP(N, P, refs)
+        export_marginal_P(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
+        cov_P(N, P, refs, minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1))
+
     maxP(N, P, refs, minX *(unit_conversions ** -1) , maxX * (unit_conversions ** -1))

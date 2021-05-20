@@ -50,7 +50,7 @@ if __name__ == "__main__":
     import pickle
     import numpy as np
     dir = r"/blue/c.hages/cfai2304/"
-    fname = 'i600.pik'
+    fname = 'ipvtest.pik'
     # simPar
     Time    = 100                             # Final time (ns)
     Length  = 1000                            # Length (nm)
@@ -69,19 +69,19 @@ if __name__ == "__main__":
     P0 = 1e16/(1e7)**3                        # [/ nm^3]
 
     # matPar - 1 cm^2/Vs = 2.569257e3 nm^2/ns
-    DN  = np.array([0.1, 1, 10])  *(1e7)**2/(1e9)*.02569257      # [nm^2 / ns]
-    DP  = np.array([0.1, 1, 10])  *(1e7)**2/(1e9)*.02569257      # [nm^2  /ns]
+    DN  = np.array([0.1,10])  *(1e7)**2/(1e9)*.02569257      # [nm^2 / ns]
+    DP  = np.array([0.1,10])  *(1e7)**2/(1e9)*.02569257      # [nm^2  /ns]
     rate = np.array([1e-10,1e-12])   *(1e7)**3/(1e9)            # [nm^3 / ns]
-    sr0  = np.array([1e2, 1e4, 1e5]) *(1e7)/(1e9)               # [nm / ns]
-    srL  = np.array([1e2, 1e4, 1e5]) *(1e7)/(1e9)               # [nm / ns]
-    tauN = np.array([.5,5,500])                                 # [ns]
-    tauP = np.array([.5,5,500])                                 # [ns]
-    Lambda = lambda0*np.array([10.,100.])**-1                   # [nm]
+    sr0  = np.array([1e2, 1e5]) *(1e7)/(1e9)               # [nm / ns]
+    srL  = np.array([1e2, 1e5]) *(1e7)/(1e9)               # [nm / ns]
+    tauN = np.array([.5,50])                                 # [ns]
+    tauP = np.array([.5,50])                                 # [ns]
+    Lambda = lambda0*np.array([10.])**-1                   # [nm]
 
     # Pack parameters
     pT = tuple(np.array(pT)*T//100)
     simPar = (Length, Time, L, T, plT, pT, tol, MAX)
-    iniPar = (a, l)
+    iniPar = [[a, l]]
     matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda]
     matPar = get_all_combinations(matPar)
 

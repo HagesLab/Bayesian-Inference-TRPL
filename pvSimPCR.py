@@ -74,7 +74,7 @@ def pcreduce(ld, d, ud, B, c, buffer, TPB):
     return
 
 @cuda.jit(device=True)
-def iterate(N, P, E, matPar, par):
+def iterate(N, P, E, matPar, par, p, t):
 
 # Unpack local variables
     N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda = matPar
@@ -102,6 +102,13 @@ def iterate(N, P, E, matPar, par):
         bP[n] = a1*Pk[n] + a2*P[ko,n]
         bE[n] = a1*Ek[n] + a2*E[ko,n]
     cuda.syncthreads()
+    #if p == 1 and t == 0:
+    #    if cuda.threadIdx.x == 0:
+    #        print("Pk[n]")
+    #    
+    #    print(Pk[th])
+    #
+    #cuda.syncthreads()
 # Iterate outer loop to convergence
     for iters in range(MAX):                    # Up to MAX iterations
 
@@ -178,7 +185,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, race):
 
     ind  = 0
     for t in range(T+1):                            # Outer time loop
-    #for t in range(1):
+    #for t in range(1000):
         #if t%100 ==0 and cuda.grid(1) == 0:
         #    print('time: ', t)
         if t == 0:                                  # Select integration order
@@ -193,21 +200,39 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, race):
         #for blk in range(1):
             #if t==0 and cuda.grid(1) == 0:
             #    print('block', blk, 'Starting p: ', blk*BPG)
-            race[p] += 1
-
-            iters = iterate(N[p], P[p], E[p], matPar[p], par)
+            if cuda.threadIdx.x == 0: race[p] += 1
+            #if p == 0 and cuda.threadIdx.x == 0: 
+            #    print("Running #0")
+            #cuda.syncthreads()
+            
+            iters = iterate(N[p], P[p], E[p], matPar[p], par, p, t)
+            #if t == 0 and p == 1 and cuda.threadIdx.x == 0: 
+            #    print("Ran #1")
+            #    print("k:")
+            #    print(k)
+            #    print("iters")
+            #    print(iters)
+            #    print("N[p,k,0]:")
+            #    print(N[p,k,0])
+            cuda.syncthreads()
+            #else: iters = 0
             if iters >= MAX:
                 if cuda.threadIdx.x == 0:
                     print('NO CONVERGENCE: ', \
                       'Block ', p, 'simtime ', t, iters, ' iterations')
                 break
-            """
+            
             if t%plT == 0:
                 Sum = 0
+                #if t == 0 and p == 1 and cuda.threadIdx.x == 0:
+                #    print("k again:")
+                #    print(k)
+                #    print("N[p,k,0]")
+                #    print(N[p,k,0])
+                #cuda.syncthreads()
                 for n in range(L):
                     Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
                 plI[p,t//plT] = rate[p]*Sum
-            """
             
 
             # Record specified timesteps, for debug mode
@@ -219,6 +244,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, race):
         #if t == pT[ind]:  ind += 1
         
         cuda.syncthreads()
+        """
         if t%plT == 0:
             for p in range(cuda.grid(1), len(matPar), cuda.gridsize(1)):
                 Sum = 0
@@ -226,7 +252,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, race):
                     Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
                 plI[p,t//plT] = rate[p]*Sum
             cuda.syncthreads()
-        
+        """
     # Record last two timesteps
     th = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
     for p in range(th,len(N), cuda.gridsize(1)):
@@ -243,6 +269,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, race):
 
 def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
     print("Solver called")
+    print((TPB, BPG))
     # Unpack local parameters
     Length, Time, L, T, plT, pT, tol, MAX = simPar
     dx = Length/L
@@ -279,7 +306,6 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
         plE = np.zeros((Threads, 2, L+1))
 
         if init_mode == "exp":
-
             # Initialization - nodes at 1/2, 3/2 ... L-1/2
             a,l = ic
             a  *= dx3
@@ -293,7 +319,7 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
         N0, P0 = matPar[:,0:2].T
         N[:,0] = np.add.outer(N0, dN)
         P[:,0] = np.add.outer(P0, dN)
-    
+        #print("Incoming N[1]:", N[1])
         clock0 = time.time()
         devN = cuda.to_device(N)
         devP = cuda.to_device(P)
@@ -319,7 +345,7 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
         plE = devpE.copy_to_host()
         print("Copy back took {} sec".format(time.time() - clock0))
         race = drace.copy_to_host()
-        print(list(race))
+        print(race[race != T//plT+1])
         plI_main[:, (T//plT+1)*count:(T//plT+1)*(count+1)] = plI
         count += 1
     # Re-dimensionalize
@@ -327,7 +353,8 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
     plN /= dx**3
     plP /= dx**3
     plE /= dx
-    #print(plI_main)
+    print(plI_main[:,0:6])
+    print(list(np.sum(plI_main, axis=1)))
     return (plN, plP, plE, plI_main)
 
 if __name__ == "__main__":
@@ -338,12 +365,12 @@ if __name__ == "__main__":
     SM_count = getattr(device, "MULTIPROCESSOR_COUNT")
     print("SMs: ", SM_count)
     dir = r"/blue/c.hages/cfai2304/"
-    fname = 'i600.pik'
+    fname = 'ipvtest.pik'
     oname = 'o602.pik'
     print("Reading input ", dir + fname)
     simPar, iniPar, matPar = pickle.load(open(dir + fname, 'rb'))
     TPB = simPar[2]                               # Define # Threads per block: one per node 
     BPG = SM_count * 2                                    # Define # Blocks: multiple of # available SMs
     pvOut = pvSim(matPar, simPar, iniPar, TPB, BPG)
-    pickle.dump(pvOut, open(dir + oname, 'wb'))
+    #pickle.dump(pvOut, open(dir + oname, 'wb'))
     print("Wrote results to ", dir + oname)
