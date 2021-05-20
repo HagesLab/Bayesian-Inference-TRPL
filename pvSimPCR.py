@@ -194,13 +194,13 @@ def iterate(N, P, E, matPar, par, p, t):
     return iters+1
 
 @cuda.jit(device=False)
-def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, race):
-    L, T, tol, MAX, TPB, BPG, plT = simPar[:7]
-    pT   = simPar[7:]
+def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
+    L, T, tol, MAX, plT = simPar[:5]
+    pT   = simPar[5:]
     N0   = matPar[:,0]
     P0   = matPar[:,1]
     rate = matPar[:,4]
-
+    BPG, TPB = gridPar
     ind  = 0
     for t in range(T+1):                            # Outer time loop
     #for t in range(10):
@@ -285,18 +285,21 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, race):
             plE[p,0,n] = E[p,ko,n]
           
 
-def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
+def pvSim(matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init_mode="exp"):
     print("Solver called")
     print((TPB, BPG))
     # Unpack local parameters
     Length, Time, L, T, plT, pT, tol, MAX = simPar
     dx = Length/L
     dt = Time/T
-    simPar = (L, T, tol, MAX, TPB, BPG, plT, *pT)
+    simPar = (L, T, tol, MAX, plT, *pT)
+    gridPar = (BPG, *TPB)
     global SIZ 
     SIZ = L
     global BuSIZ
     BuSIZ = int(SIZ)*4
+    global MSPB
+    MSPB = max_sims_per_block
 
     # Non dimensionalize variables
     dx3 = dx**3; dtdx = dt/dx; dtdx2 = dtdx/dx
@@ -348,11 +351,12 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, init_mode="exp"):
         devpI = cuda.to_device(plI)
         devm = cuda.to_device(matPar)
         devs = cuda.to_device(simPar)
+        devg = cuda.to_device(gridPar)
         print("Loading data took {} sec".format(time.time() - clock0))
         race = np.zeros(len(matPar))
         drace = cuda.to_device(race)
         clock0 = time.time()
-        tEvol[BPG,TPB](devN, devP, devE, devpN, devpP, devpE, devpI, devm, devs, drace)
+        tEvol[BPG,TPB](devN, devP, devE, devpN, devpP, devpE, devpI, devm, devs, devg, drace)
         cuda.synchronize()
         print("tEvol took {} sec".format(time.time() - clock0))
     
