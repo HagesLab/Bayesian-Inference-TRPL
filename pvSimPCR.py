@@ -10,29 +10,29 @@ from numba import cuda, float32 as floatX
 import time
 
 @cuda.jit(device=True)
-def norm2(A0,A1,A2,b,c,buffer, TPB):
+def norm2(A0,A1,A2,b,c,buffer, err, TPB):
     N = len(b)
 
-    buffer[0] = abs(A1[0]*c[0]+A0[0]*c[1] - b[0])
-    buffer[N] = abs(b[0])
-    buffer[N-1] = abs(A2[-1]*c[-2]+A1[-1]*c[-1] - b[-1])
-    buffer[2*N-1] = abs(b[-1])
+    buffer[0, 0] = abs(A1[0, 0]*c[0, 0]+A0[0, 0]*c[1, 0] - b[0, 0])
+    buffer[N, 0] = abs(b[0, 0])
+    buffer[N-1, 0] = abs(A2[-1, 0]*c[-2, 0]+A1[-1, 0]*c[-1, 0] - b[-1, 0])
+    buffer[2*N-1, 0] = abs(b[-1, 0])
 
     thr = cuda.threadIdx.x
     rf = N // 2
     for i in range(1+thr,N-1,TPB):
-        buffer[i] = abs(A2[i]*c[i-1]+A1[i]*c[i]+A0[i]*c[i+1] - b[i])
-        buffer[i+N] = abs(b[i])
+        buffer[i, 0] = abs(A2[i, 0]*c[i-1, 0]+A1[i, 0]*c[i, 0]+A0[i, 0]*c[i+1, 0] - b[i, 0])
+        buffer[i+N, 0] = abs(b[i, 0])
 
     cuda.syncthreads()
     while rf >= 1:
         for i in range(thr,rf, TPB):
-            buffer[i] = buffer[i] + buffer[i+rf]
-            buffer[i+N] = buffer[i+N] + buffer[i+N+rf]
+            buffer[i, 0] = buffer[i, 0] + buffer[i+rf, 0]
+            buffer[i+N, 0] = buffer[i+N, 0] + buffer[i+N+rf, 0]
         cuda.syncthreads()
         rf //= 2
 
-    return buffer[0]/buffer[N]
+    err[0] = buffer[0, 0]/buffer[N, 0]
 
 @cuda.jit(device=True)
 def pcreduce(ld, d, ud, B, c, buffer, TPB):
@@ -43,33 +43,33 @@ def pcreduce(ld, d, ud, B, c, buffer, TPB):
     thr = cuda.threadIdx.x
     while N / rf > 2:
         for i in range(thr, N, TPB):
-            buffer[i] = ld[i]
-            buffer[i+N] = d[i]
-            buffer[i+2*N] = ud[i]
-            buffer[i+3*N] = B[i]
+            buffer[i, 0] = ld[i, 0]
+            buffer[i+N, 0] = d[i, 0]
+            buffer[i+2*N, 0] = ud[i, 0]
+            buffer[i+3*N, 0] = B[i, 0]
 
         cuda.syncthreads() # Prevent race condition
         for i in range(thr, N, TPB):
             if i >= rf:
-                k1 = buffer[i] / buffer[i+N-rf]
-                d[i] -= buffer[i+2*N-rf]*k1
-                ld[i] = -buffer[i-rf] * k1
-                B[i] -= buffer[i+3*N-rf]*k1
+                k1 = buffer[i, 0] / buffer[i+N-rf, 0]
+                d[i, 0] -= buffer[i+2*N-rf, 0]*k1
+                ld[i, 0] = -buffer[i-rf, 0] * k1
+                B[i, 0] -= buffer[i+3*N-rf, 0]*k1
 
             if i < (N - rf):
-                k2 = buffer[i+2*N] / buffer[i+N+rf]
-                d[i] -= buffer[i+rf]*k2
-                ud[i] = -buffer[i+2*N+rf] * k2
-                B[i] -= buffer[i+3*N+rf]*k2
+                k2 = buffer[i+2*N, 0] / buffer[i+N+rf, 0]
+                d[i, 0] -= buffer[i+rf, 0]*k2
+                ud[i, 0] = -buffer[i+2*N+rf, 0] * k2
+                B[i, 0] -= buffer[i+3*N+rf, 0]*k2
         
         cuda.syncthreads()
         rf *= 2
     
     # Solve    
     for i in range(thr, rf, TPB):
-        k = ud[i] / d[i+rf]
-        c[i] = (B[i] - B[i+rf]*k) / (d[i] - ld[i+rf]*k)
-        c[i+rf] = (B[i+rf] - ld[i+rf]*c[i]) / d[i+rf]
+        k = ud[i, 0] / d[i+rf, 0]
+        c[i, 0] = (B[i, 0] - B[i+rf, 0]*k) / (d[i, 0] - ld[i+rf, 0]*k)
+        c[i+rf, 0] = (B[i+rf, 0] - ld[i+rf, 0]*c[i, 0]) / d[i+rf, 0]
         
     return
 
@@ -81,29 +81,32 @@ def iterate(N, P, E, matPar, par, p, t):
     a0, a1, a2, k, kp, ko, L, tol, MAX, TPB = par
 
     TOL  = 10.0**(-tol)
-    Nk = cuda.shared.array(shape=(SIZ), dtype=floatX)
-    Pk = cuda.shared.array(shape=(SIZ), dtype=floatX)
-    Ek = cuda.shared.array(shape=(SIZ), dtype=floatX)
-    bN = cuda.shared.array(shape=(SIZ), dtype=floatX)
-    bP = cuda.shared.array(shape=(SIZ), dtype=floatX)
-    bE = cuda.shared.array(shape=(SIZ), dtype=floatX)
-    bb = cuda.shared.array(shape=(SIZ), dtype=floatX)
-    A0 = cuda.shared.array(shape=(SIZ), dtype=floatX)
-    A1 = cuda.shared.array(shape=(SIZ), dtype=floatX)
-    A2 = cuda.shared.array(shape=(SIZ), dtype=floatX)
-    buffer = cuda.shared.array(shape=(BuSIZ), dtype=floatX)
+    Nk = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
+    Pk = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
+    Ek = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
+    bN = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
+    bP = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
+    bE = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
+    bb = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
+    A0 = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
+    A1 = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
+    A2 = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
+    buffer = cuda.shared.array(shape=(BuSIZ, MSPB), dtype=floatX)
+    errN = cuda.shared.array(shape=(MSPB), dtype=floatX)
+    errP = cuda.shared.array(shape=(MSPB), dtype=floatX)
     th = cuda.threadIdx.x                      # Set thread ID
 
     for n in range(th, L, TPB):
-        Nk[n] = N[k,n]                        # Initialize tmp values
-        Pk[n] = P[k,n]
-        Ek[n] = E[k,n]
-        bN[n] = a1*Nk[n] + a2*N[ko,n]
-        bP[n] = a1*Pk[n] + a2*P[ko,n]
-        bE[n] = a1*Ek[n] + a2*E[ko,n]
+        Nk[n, 0] = N[k,n]                        # Initialize tmp values
+        Pk[n, 0] = P[k,n]
+        Ek[n, 0] = E[k,n]
+        bN[n, 0] = a1*Nk[n, 0] + a2*N[ko,n]
+        bP[n, 0] = a1*Pk[n, 0] + a2*P[ko,n]
+        bE[n, 0] = a1*Ek[n, 0] + a2*E[ko,n]
 
-    A0[-1] = 0
-    A2[0] = 0
+
+    A0[-1, 0] = 0
+    A2[0, 0] = 0
 
     cuda.syncthreads()
 # Iterate outer loop to convergence
@@ -117,8 +120,8 @@ def iterate(N, P, E, matPar, par, p, t):
         #cuda.syncthreads()
 
         for n in range(1+th, L, TPB):           # Solve for N
-            A0[n-1]   = DN*(-Ek[n]/2 - 1)
-            A2[n] = DN*(+Ek[n]/2 - 1)
+            A0[n-1, 0]   = DN*(-Ek[n, 0]/2 - 1)
+            A2[n, 0] = DN*(+Ek[n, 0]/2 - 1)
         cuda.syncthreads()
         #if p == 1 and t == 0 and iters == 0:
         #    if th == 0: 
@@ -128,21 +131,21 @@ def iterate(N, P, E, matPar, par, p, t):
         #    print(A2[th])
         #cuda.syncthreads()
         for n in range(th, L, TPB):
-            np = Nk[n]*Pk[n] - N0*P0
-            tp = Nk[n]*tauP + Pk[n]*tauN
-            ds = -rate*Pk[n] - (Pk[n]*tp - tauP*np)/tp**2
-            A1[n] = a0 - A0[n-1] - A2[(n+1) % L] - ds
-            bb[n] = -(rate + 1/tp)*np - ds*Nk[n] - bN[n]
+            np = Nk[n, 0]*Pk[n, 0] - N0*P0
+            tp = Nk[n, 0]*tauP + Pk[n, 0]*tauN
+            ds = -rate*Pk[n, 0] - (Pk[n, 0]*tp - tauP*np)/tp**2
+            A1[n, 0] = a0 - A0[n-1, 0] - A2[(n+1) % L, 0] - ds
+            bb[n, 0] = -(rate + 1/tp)*np - ds*Nk[n, 0] - bN[n, 0]
         cuda.syncthreads()
 
-        ds0 = -sr0*(Pk[ 0]**2 + N0*P0)/(Nk[ 0]+Pk[ 0])**2
-        dsL = -srL*(Pk[-1]**2 + N0*P0)/(Nk[-1]+Pk[-1])**2
-        A1[0]  -= ds0
-        A1[-1] -= dsL
-        bb[0]  -= sr0*(Nk[ 0]*Pk[ 0]-N0*P0)/(Nk[ 0]+Pk[ 0]) + ds0*Nk[ 0]
-        bb[-1] -= srL*(Nk[-1]*Pk[-1]-N0*P0)/(Nk[-1]+Pk[-1]) + dsL*Nk[-1]
+        ds0 = -sr0*(Pk[ 0, 0]**2 + N0*P0)/(Nk[ 0, 0]+Pk[ 0, 0])**2
+        dsL = -srL*(Pk[-1, 0]**2 + N0*P0)/(Nk[-1, 0]+Pk[-1, 0])**2
+        A1[0, 0]  -= ds0
+        A1[-1, 0] -= dsL
+        bb[0, 0]  -= sr0*(Nk[ 0, 0]*Pk[ 0, 0]-N0*P0)/(Nk[ 0, 0]+Pk[ 0, 0]) + ds0*Nk[ 0, 0]
+        bb[-1, 0] -= srL*(Nk[-1, 0]*Pk[-1, 0]-N0*P0)/(Nk[-1, 0]+Pk[-1, 0]) + dsL*Nk[-1, 0]
 
-        errN = norm2(A0,A1,A2,bb,Nk,buffer, TPB)
+        norm2(A0,A1,A2,bb,Nk,buffer, errN,TPB)
         cuda.syncthreads()
 
         pcreduce(A2, A1, A0, bb, Nk, buffer, TPB)
@@ -150,39 +153,39 @@ def iterate(N, P, E, matPar, par, p, t):
         cuda.syncthreads()
 
         for n in range(1+th, L, TPB):                    # Solve for P
-            A0[n-1]   = DP*(+Ek[n]/2 - 1)
-            A2[n] = DP*(-Ek[n]/2 - 1)
+            A0[n-1, 0]   = DP*(+Ek[n, 0]/2 - 1)
+            A2[n, 0] = DP*(-Ek[n, 0]/2 - 1)
         cuda.syncthreads()
         for n in range(th, L, TPB):
-            np = Nk[n]*Pk[n] - N0*P0
-            tp = Nk[n]*tauP + Pk[n]*tauN
-            ds = -rate*Nk[n] - (Nk[n]*tp - tauN*np)/tp**2
-            A1[n] = a0 - A0[n-1] - A2[(n+1) % L] - ds
-            bb[n] = -(rate + 1/tp)*np - ds*Pk[n] - bP[n]
+            np = Nk[n, 0]*Pk[n, 0] - N0*P0
+            tp = Nk[n, 0]*tauP + Pk[n, 0]*tauN
+            ds = -rate*Nk[n, 0] - (Nk[n, 0]*tp - tauN*np)/tp**2
+            A1[n, 0] = a0 - A0[n-1, 0] - A2[(n+1) % L, 0] - ds
+            bb[n, 0] = -(rate + 1/tp)*np - ds*Pk[n, 0] - bP[n, 0]
         cuda.syncthreads()
-        ds0 = -sr0*(Nk[ 0]**2 + N0*P0)/(Nk[ 0]+Pk[ 0])**2
-        dsL = -srL*(Nk[-1]**2 + N0*P0)/(Nk[-1]+Pk[-1])**2
-        A1[0]  -= ds0
-        A1[-1] -= dsL
-        bb[0]  -= sr0*(Nk[ 0]*Pk[ 0]-N0*P0)/(Nk[ 0]+Pk[ 0]) + ds0*Pk[ 0]
-        bb[-1] -= srL*(Nk[-1]*Pk[-1]-N0*P0)/(Nk[-1]+Pk[-1]) + dsL*Pk[-1]
+        ds0 = -sr0*(Nk[ 0, 0]**2 + N0*P0)/(Nk[ 0, 0]+Pk[ 0, 0])**2
+        dsL = -srL*(Nk[-1, 0]**2 + N0*P0)/(Nk[-1, 0]+Pk[-1, 0])**2
+        A1[0, 0]  -= ds0
+        A1[-1, 0] -= dsL
+        bb[0, 0]  -= sr0*(Nk[ 0, 0]*Pk[ 0, 0]-N0*P0)/(Nk[ 0, 0]+Pk[ 0, 0]) + ds0*Pk[ 0, 0]
+        bb[-1, 0] -= srL*(Nk[-1, 0]*Pk[-1, 0]-N0*P0)/(Nk[-1, 0]+Pk[-1, 0]) + dsL*Pk[-1, 0]
 
-        errP = norm2(A0,A1,A2,bb,Pk, buffer, TPB)
+        norm2(A0,A1,A2,bb,Pk, buffer, errP,TPB)
         cuda.syncthreads()
         pcreduce(A2, A1, A0, bb, Pk, buffer, TPB)
         cuda.syncthreads()
 
         for n in range(1+th, L, TPB):                    # Solve for E
-            A1[n] = Lambda*(DP*(Pk[n]+Pk[n-1]) + DN*(Nk[n]+Nk[n-1]))/2 + a0
-            bb[n] = Lambda*(DP*(Pk[n]-Pk[n-1]) - DN*(Nk[n]-Nk[n-1])) - bE[n]
-            Ek[n] = bb[n]/A1[n]          
+            A1[n, 0] = Lambda*(DP*(Pk[n, 0]+Pk[n-1, 0]) + DN*(Nk[n, 0]+Nk[n-1, 0]))/2 + a0
+            bb[n, 0] = Lambda*(DP*(Pk[n, 0]-Pk[n-1, 0]) - DN*(Nk[n, 0]-Nk[n-1, 0])) - bE[n, 0]
+            Ek[n, 0] = bb[n, 0]/A1[n, 0]          
         cuda.syncthreads()
-        if ((errN < TOL and errP < TOL)):  break    
+        if ((errN[0] < TOL and errP[0] < TOL)):  break    
     
     for n in range(th, L, TPB):
-        N[kp,n] = Nk[n]                         # Copy back tmp values
-        P[kp,n] = Pk[n]
-        E[kp,n] = Ek[n]
+        N[kp,n] = Nk[n, 0]                         # Copy back tmp values
+        P[kp,n] = Pk[n, 0]
+        E[kp,n] = Ek[n, 0]
     cuda.syncthreads()
     #if t == 0 and p == 1:                
     #   if th == 0: 
