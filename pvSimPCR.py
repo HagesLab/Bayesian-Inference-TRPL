@@ -51,26 +51,28 @@ def pcreduce(ld, d, ud, B, c, buffer, TPB):
 
         cuda.syncthreads() # Prevent race condition
         for i in range(thr, N, TPB):
-            if i >= rf:
-                k1 = buffer[i, 0] / buffer[i+N-rf, 0]
-                d[i, 0] -= buffer[i+2*N-rf, 0]*k1
-                ld[i, 0] = -buffer[i-rf, 0] * k1
-                B[i, 0] -= buffer[i+3*N-rf, 0]*k1
+            for y in range(num_sims):
+                if i >= rf:
+                    k1 = buffer[i, y] / buffer[i+N-rf, 0]
+                    d[i, y] -= buffer[i+2*N-rf, y]*k1
+                    ld[i, y] = -buffer[i-rf, y] * k1
+                    B[i, y] -= buffer[i+3*N-rf, y]*k1
 
-            if i < (N - rf):
-                k2 = buffer[i+2*N, 0] / buffer[i+N+rf, 0]
-                d[i, 0] -= buffer[i+rf, 0]*k2
-                ud[i, 0] = -buffer[i+2*N+rf, 0] * k2
-                B[i, 0] -= buffer[i+3*N+rf, 0]*k2
+                if i < (N - rf):
+                    k2 = buffer[i+2*N, y] / buffer[i+N+rf, 0]
+                    d[i, y] -= buffer[i+rf, y]*k2
+                    ud[i, y] = -buffer[i+2*N+rf, y] * k2
+                    B[i, y] -= buffer[i+3*N+rf, y]*k2
         
         cuda.syncthreads()
         rf *= 2
     
     # Solve    
     for i in range(thr, rf, TPB):
-        k = ud[i, 0] / d[i+rf, 0]
-        c[i, 0] = (B[i, 0] - B[i+rf, 0]*k) / (d[i, 0] - ld[i+rf, 0]*k)
-        c[i+rf, 0] = (B[i+rf, 0] - ld[i+rf, 0]*c[i, 0]) / d[i+rf, 0]
+        for y in range(num_sims):
+            k = ud[i, y] / d[i+rf, 0]
+            c[i, y] = (B[i, y] - B[i+rf, y]*k) / (d[i, y] - ld[i+rf,y]*k)
+            c[i+rf, y] = (B[i+rf, y] - ld[i+rf, y]*c[i, y]) / d[i+rf, y]
         
     return
 
@@ -205,9 +207,10 @@ def iterate(N, P, E, matPar, par, p, t):
         cuda.syncthreads()
 
         for n in range(1+th, L, TPB):                    # Solve for E
-            A1[n, 0] = Lambda[0]*(DP[0]*(Pk[n, 0]+Pk[n-1, 0]) + DN[0]*(Nk[n, 0]+Nk[n-1, 0]))/2 + a0
-            bb[n, 0] = Lambda[0]*(DP[0]*(Pk[n, 0]-Pk[n-1, 0]) - DN[0]*(Nk[n, 0]-Nk[n-1, 0])) - bE[n, 0]
-            Ek[n, 0] = bb[n, 0]/A1[n, 0]          
+            for y in range(num_sims):
+                A1[n, y] = Lambda[y]*(DP[y]*(Pk[n, y]+Pk[n-1, 0]) + DN[y]*(Nk[n, 0]+Nk[n-1, 0]))/2 + a0
+                bb[n, y] = Lambda[y]*(DP[y]*(Pk[n, 0]-Pk[n-1, 0]) - DN[y]*(Nk[n, 0]-Nk[n-1, 0])) - bE[n, y]
+                Ek[n, y] = bb[n, y]/A1[n, y]          
         cuda.syncthreads()
 
         #if (errN[0] < TOL and errP[0] < TOL): break
@@ -217,9 +220,10 @@ def iterate(N, P, E, matPar, par, p, t):
         if (max_errN < TOL and max_errP < TOL): break
     
     for n in range(th, L, TPB):
-        N[0,kp,n] = Nk[n, 0]                         # Copy back tmp values
-        P[0,kp,n] = Pk[n, 0]
-        E[0,kp,n] = Ek[n, 0]
+        for y in range(num_sims):
+            N[y,kp,n] = Nk[n, y]                         # Copy back tmp values
+            P[y,kp,n] = Pk[n, y]
+            E[y,kp,n] = Ek[n, y]
     cuda.syncthreads()
     #if t == 0 and p == 1:                
     #   if th == 0: 
@@ -278,17 +282,18 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
                 break
             
             if t%plT == 0:
-                Sum = 0
-                #if t == 0 and p == 1 and cuda.threadIdx.x == 0:
-                #    print("k again:")
-                #    print(k)
-                #    print("N[p,kp,0]")
-                #    print(N[p,kp,0])
-                #cuda.syncthreads()
-                for n in range(L):
-                    Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
-                plI[p,t//plT] = rate[p]*Sum
-            
+                for y in range(p, p+len(N[p:p+MSPB])):
+                    Sum = 0
+                    #if t == 0 and p == 1 and cuda.threadIdx.x == 0:
+                    #    print("k again:")
+                    #    print(k)
+                    #    print("N[p,kp,0]")
+                    #    print(N[p,kp,0])
+                    #cuda.syncthreads()
+                    for n in range(L):
+                        Sum += N[y,k,n]*P[y,k,n]-N0[y]*P0[y]
+                    plI[y,t//plT] = rate[y]*Sum
+                
 
             # Record specified timesteps, for debug mode
             #if t == pT[ind]:
