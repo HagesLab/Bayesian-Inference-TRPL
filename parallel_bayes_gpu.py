@@ -357,7 +357,7 @@ if __name__ == "__main__":
             device = cuda.get_current_device()
             num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
             TPB = (2 ** 7,)
-            max_sims_per_block = 3
+            max_sims_per_block = 2
             from pvSimPCR import pvSim
         else:
             print("No GPU detected - reverting to CPU simulation")
