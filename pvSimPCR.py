@@ -12,27 +12,30 @@ import time
 @cuda.jit(device=True)
 def norm2(A0,A1,A2,b,c,buffer, err, TPB):
     N = len(b)
-
-    buffer[0, 0] = abs(A1[0, 0]*c[0, 0]+A0[0, 0]*c[1, 0] - b[0, 0])
-    buffer[N, 0] = abs(b[0, 0])
-    buffer[N-1, 0] = abs(A2[-1, 0]*c[-2, 0]+A1[-1, 0]*c[-1, 0] - b[-1, 0])
-    buffer[2*N-1, 0] = abs(b[-1, 0])
-
+    num_sims = len(A0[0])
     thr = cuda.threadIdx.x
+    for y in range(thr, num_sims, TPB):
+        buffer[0, y] = abs(A1[0, y]*c[0, y]+A0[0, y]*c[1, y] - b[0, y])
+        buffer[N, y] = abs(b[0, y])
+        buffer[N-1, y] = abs(A2[-1, y]*c[-2, y]+A1[-1, y]*c[-1, y] - b[-1, y])
+        buffer[2*N-1, y] = abs(b[-1, y])
+    cuda.syncthreads()
     rf = N // 2
     for i in range(1+thr,N-1,TPB):
-        buffer[i, 0] = abs(A2[i, 0]*c[i-1, 0]+A1[i, 0]*c[i, 0]+A0[i, 0]*c[i+1, 0] - b[i, 0])
-        buffer[i+N, 0] = abs(b[i, 0])
+        for y in range(num_sims):
+            buffer[i, y] = abs(A2[i, y]*c[i-1, y]+A1[i, y]*c[i, y]+A0[i, y]*c[i+1, y] - b[i, y])
+            buffer[i+N, y] = abs(b[i, y])
 
     cuda.syncthreads()
     while rf >= 1:
         for i in range(thr,rf, TPB):
-            buffer[i, 0] = buffer[i, 0] + buffer[i+rf, 0]
-            buffer[i+N, 0] = buffer[i+N, 0] + buffer[i+N+rf, 0]
+            for y in range(num_sims):
+                buffer[i, y] = buffer[i, y] + buffer[i+rf, y]
+                buffer[i+N, y] = buffer[i+N, y] + buffer[i+N+rf, y]
         cuda.syncthreads()
         rf //= 2
-
-    err[0] = buffer[0, 0]/buffer[N, 0]
+    for y in range(thr, num_sims, TPB):
+        err[y] = buffer[0, y]/buffer[N, y]
 
 @cuda.jit(device=True)
 def pcreduce(ld, d, ud, B, c, buffer, TPB):
@@ -304,15 +307,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
         #if t == pT[ind]:  ind += 1
         
         cuda.syncthreads()
-        """
-        if t%plT == 0:
-            for p in range(cuda.grid(1), len(matPar), cuda.gridsize(1)):
-                Sum = 0
-                for n in range(L):
-                    Sum += N[p,k,n]*P[p,k,n]-N0[p]*P0[p]
-                plI[p,t//plT] = rate[p]*Sum
-            cuda.syncthreads()
-        """
+
     # Record last two timesteps
     th = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
     for p in range(th,len(N), cuda.gridsize(1)):
