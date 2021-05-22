@@ -303,11 +303,11 @@ if __name__ == "__main__":
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,16,16,1,16,1,1])
     ref3 = np.array([1,16,1,1,16,16,1,16,16,1])
-    refs = np.array([ref4])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref3])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 20, 13.6**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 20, 13.6**-1])
+    minX = np.array([1e8, 1e14, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 13.6**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e17, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 13.6**-1])
 
     LOG_PL = True
     bval = 1e-10
@@ -357,7 +357,7 @@ if __name__ == "__main__":
             device = cuda.get_current_device()
             num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
             TPB = (2 ** 7,)
-            max_sims_per_block = 2
+            max_sims_per_block = 6           # Maximum of 6 due to shared memory limit
             from pvSimPCR import pvSim
         else:
             print("No GPU detected - reverting to CPU simulation")
