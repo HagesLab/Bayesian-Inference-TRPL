@@ -303,14 +303,15 @@ if __name__ == "__main__":
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,16,16,1,16,1,1])
     ref3 = np.array([1,16,1,1,16,16,1,16,16,1])
-    refs = np.array([ref3])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref2])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e14, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 13.6**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 13.6**-1])
+    minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 13.6**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 13.6**-1])
 
     LOG_PL = True
-    bval = 1e-10
+    scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
+    bval = 1e10 * scale_f
     include_neighbors = True
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
@@ -344,7 +345,7 @@ if __name__ == "__main__":
         print("Refinement levels:")
         for i in range(num_params):
             print("{}: {}".format(param_names[i], refs[:,i]))        
-        e_data = get_data(experimental_data_filename, scale_f=1e-37) # [carr/cm^2 s] to [carr/nm^2 ns] 
+        e_data = get_data(experimental_data_filename, scale_f=scale_f) # [carr/cm^2 s] to [carr/nm^2 ns] 
         print("\nExperimental data - {}".format(experimental_data_filename))
         print(e_data)
         print("Output: {}".format(out_filename))
