@@ -174,41 +174,35 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
 
 
-            ## OVERRIDE: MAKE SRH TAUS EQUAL
-            #X[:,8]=X[:,7]
-            #X[:,3]=X[:,2]
-
+        ## OVERRIDE: MAKE SRH TAUS EQUAL
         #X[:,8] = X[:,7]
-        #X[:,3] = X[:,2]
+        X[:,2] = X[:,3]
 
             #plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1), dtype=np.float32)
 
         plI = np.empty((len(X), len(init_params) *(sim_params[3] // sim_params[4] + 1)), dtype=np.float32)
-        
+        times, values, std = data        
+        assert len(plI[0]) == len(values), "Error: model time grid mismatch: {} vs {}".format(len(plI[0]), len(values))
         for blk in range(0,len(X),GPU_GROUP_SIZE):
             
             if has_GPU:
-                plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params, TPB, num_SMs, max_sims_per_block,init_mode=init_mode)[-1]
+                model(plI[blk:blk+GPU_GROUP_SIZE], X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params, TPB, num_SMs, max_sims_per_block,init_mode=init_mode)[-1]
             else:
                 plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params)[1][-1]
         
-        times, values, std = data
         #sys.exit()    
         if LOG_PL:
             plI[plI<bval] = bval
             plI = np.log(plI)
         # TODO: Match experimental data timesteps to model timesteps
-        sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI - values) ** 2, axis=0)
-        Pbk = np.zeros(len(X)) # P's for block
-        for n in range(0, len(N), Np):
-            Pbk2 = Pbk[n:n+Np]
-            plI2 = plI[n:n+Np]
-            #sig = modelErr2(plI2, refs[nref])
-            #sg2 = 2*(np.amax(sig, axis=0)**2 + std**2)
-            #sg2 = 2 * (sig_sq + std ** 2)
-            sg2 = 2 * sig_sq
-            Pbk2 -= np.sum((plI2-values)**2 / sg2 + np.log(np.pi*sg2)/2, axis=1)
-            lnP[n:n+Np] = Pbk2
+
+        # Calculate errors
+        plI -= values
+        sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI) ** 2, axis=0) # Total error per timestep
+        P = np.zeros(len(X)) # log of P's for block
+        
+        sig_sq *= 2
+        P -= np.sum((plI)**2 / sig_sq + np.log(np.pi*sig_sq)/2, axis=1)
 
         """
         UNC_GROUP_SIZE = int(1e8 / len(N))     
@@ -224,11 +218,15 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
                 Pbk -= (F-values[i])**2 / sg2 + np.log(np.pi*sg2)/2
             
         #lnP[n:n+Np] = Pbk
-        lnP = Pbk
+        #lnP = Pbk
         """    
-            
-        # TODO: Better normalization scheme
-        P = np.exp(lnP + 1000*np.log(2) - np.log(len(lnP)) - np.max(lnP))
+        # Normalization scheme - to ensure that np.sum(P) is never zero due to mass underflow
+        # First, shift lnP's up so max lnP is zero, ensuring at least one nonzero P
+        # Then shift lnP a little further to maximize number of non-underflowing values
+        # without causing overflow
+        # Key is only to add or subtract from lnP - that way any introduced factors cancel out
+        # during normalize by sum(P)
+        P = np.exp(P - np.max(P) + 1000*np.log(2) - np.log(len(P)))
         P  /= np.sum(P)                                      # Normalize P's
     return N, P
 
@@ -237,24 +235,30 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 import csv
 from numba import cuda
 import sys
-def get_data(exp_file, scale_f=1):
+def get_data(exp_file, scale_f=1, sample_f=1):
     with open(exp_file, newline='') as file:
         ifstream = csv.reader(file)
         t = []
         PL = []
         uncertainty = []
+        count = 0
         for row in ifstream:
-            t.append(float(row[0]))
-            PL.append(float(row[1]))
-            uncertainty.append(float(row[2]))
+            if float(row[0]) == 0:
+                count = 0
+            if not (count % sample_f):
+                t.append(float(row[0]))
+                PL.append(float(row[1]))
+                uncertainty.append(float(row[2]))
+            
+            count += 1
 
     t = np.array(t)
-    
+    print(t)
     PL = np.array(PL) * scale_f
     uncertainty = np.array(uncertainty) * scale_f
   
     if LOG_PL:
-        PL += bval
+        PL[PL < bval] = bval
         uncertainty /= PL
         PL = np.log(PL)
     return (t, PL, uncertainty)
@@ -271,12 +275,16 @@ def get_initpoints(init_file, scale_f=1e-21):
 
 if __name__ == "__main__":
     # simPar
-    Time    = 250                             # Final time (ns)
-    Length  = 2000                            # Length (nm)
+    #Time    = 250                                 # Final time (ns)
+    #Length = 2000
+    Time    = 2000
+    Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
-    T   = 8000                                # Time points
-    plT = 8                                  # Set PL interval (dt)
+    #T   = 8000
+    T   = 5600000                                # Time points
+    #plT = 8
+    plT = 70                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
     MAX = 500                                  # Max iterations
@@ -290,7 +298,7 @@ if __name__ == "__main__":
     a  = 1e18/(1e7)**3                        # Amplitude
     l  = 100                                  # Length scale [nm]
     #iniPar = np.array([[a, l]])
-    iniPar = get_initpoints("inits.csv")
+    iniPar = get_initpoints(sys.argv[2])
 
     # This code follows a strict order of parameters:
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda]
@@ -299,20 +307,24 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,1,1,1,32,32,1,32,32,1])
+    ref1 = np.array([1,4,4,4,4,4,1,4,4,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,16,16,1,16,1,1])
-    ref3 = np.array([1,16,1,1,16,16,1,16,16,1])
-    refs = np.array([ref2])#, ref2, ref3])                         # Refinements
+    ref3 = np.array([1,5,1,5,5,5,1,5,5,1])
+    ref5 = np.array([1,2,1,6,6,6,1,6,6,1])
+    refs = np.array([ref5])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 13.6**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 13.6**-1])
+    minX = np.array([1e8, 1e13, 1, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e17, 100, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
+    #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
+    #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
 
     LOG_PL = True
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
-    bval = 1e10 * scale_f
-    include_neighbors = True
+    sample_factor = 1
+    bval = 1e15 * scale_f
+    include_neighbors = False
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
 
@@ -321,7 +333,7 @@ if __name__ == "__main__":
 
     wdir = r"/blue/c.hages/cfai2304/"
     experimental_data_filename = sys.argv[1]
-    out_filename = sys.argv[2]
+    out_filename = sys.argv[3]
     
     # Pre-checks
     try:
@@ -332,6 +344,10 @@ if __name__ == "__main__":
         assert (len(maxX) == num_params), "Missing max param values"  
         assert all(minX > 0), "Invalid param values"
         assert all(minX <= maxX), "Min params larger than max params"
+
+        for i in range(len(refs[0])):
+            if not refs[0,i] == 1:
+                assert not (minX[i] == maxX[i]), "{} is subdivided but min val == max val".format(param_names[i])
         # TODO: Additional checks involving refs
             
         print("Starting simulations with the following parameters:")
@@ -345,7 +361,7 @@ if __name__ == "__main__":
         print("Refinement levels:")
         for i in range(num_params):
             print("{}: {}".format(param_names[i], refs[:,i]))        
-        e_data = get_data(experimental_data_filename, scale_f=scale_f) # [carr/cm^2 s] to [carr/nm^2 ns] 
+        e_data = get_data(experimental_data_filename, scale_f=scale_f, sample_f = sample_factor) 
         print("\nExperimental data - {}".format(experimental_data_filename))
         print(e_data)
         print("Output: {}".format(out_filename))

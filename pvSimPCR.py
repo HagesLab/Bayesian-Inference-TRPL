@@ -266,37 +266,24 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
             #if p == 0 and cuda.threadIdx.x == 0: 
             #    print("Running #0")
             #cuda.syncthreads()
-            
+
             iters = iterate(N[p:p+MSPB], P[p:p+MSPB], E[p:p+MSPB], matPar[p:p+MSPB], par, p, t)
-            #if t == 0 and p == 1 and cuda.threadIdx.x == 0: 
-            #    print("Ran #1")
-            #    print("k:")
-            #    print(k)
-            #    print("iters")
-            #    print(iters)
-            #    print("N[p,kp,0]:")
-            #    print(N[p,kp,0])
+
             cuda.syncthreads()
-            #else: iters = 0
             if iters >= MAX:
                 if cuda.threadIdx.x == 0:
                     print('NO CONVERGENCE: ', \
                       'Block ', p, 'simtime ', t, iters, ' iterations')
+                race[-1] = 1
                 break
+                
             
             if t%plT == 0:
                 for y in range(p, p+len(N[p:p+MSPB])):
                     Sum = 0
-                    #if t == 0 and p == 1 and cuda.threadIdx.x == 0:
-                    #    print("k again:")
-                    #    print(k)
-                    #    print("N[p,kp,0]")
-                    #    print(N[p,kp,0])
-                    #cuda.syncthreads()
                     for n in range(L):
                         Sum += N[y,k,n]*P[y,k,n]-N0[y]*P0[y]
                     plI[y,t//plT] = rate[y]*Sum
-                
 
             # Record specified timesteps, for debug mode
             #if t == pT[ind]:
@@ -305,7 +292,9 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
             #        plP[p,ind,n] = P[p,k,n]
             #        plE[p,ind,n] = E[p,k,n]
         #if t == pT[ind]:  ind += 1
-        
+        if race[-1]:
+            if cuda.threadIdx.x == 0: print("Block ", cuda.blockIdx.x, " stopping due to nonconvergence:")
+            break
         cuda.syncthreads()
 
     # Record last two timesteps
@@ -322,7 +311,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
             plE[p,0,n] = E[p,ko,n]
           
 
-def pvSim(matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init_mode="exp"):
+def pvSim(plI_main, matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init_mode="exp"):
     print("Solver called")
     print((TPB, BPG))
     # Unpack local parameters
@@ -348,7 +337,7 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init_mode="exp
     Threads = len(matPar)                      # Number of threads on GPU
 
 
-    plI_main = np.zeros((Threads,(T//plT+1) * len(iniPar)))         # Arrays for plotting
+    #plI_main = np.zeros((Threads,(T//plT+1) * len(iniPar)))         # Arrays for plotting
     count = 0
     for ic in iniPar:
 
@@ -377,7 +366,7 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init_mode="exp
         N0, P0 = matPar[:,0:2].T
         N[:,0] = np.add.outer(N0, dN)
         P[:,0] = np.add.outer(P0, dN)
-        #print("Incoming N[1]:", N[1])
+        #print("Incoming N[0]:", N[0])
         clock0 = time.time()
         devN = cuda.to_device(N)
         devP = cuda.to_device(P)
@@ -390,7 +379,7 @@ def pvSim(matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init_mode="exp
         devs = cuda.to_device(simPar)
         devg = cuda.to_device(gridPar)
         print("Loading data took {} sec".format(time.time() - clock0))
-        race = np.zeros(len(matPar))
+        race = np.zeros(len(matPar) + 1)
         drace = cuda.to_device(race)
         clock0 = time.time()
         tEvol[BPG,TPB](devN, devP, devE, devpN, devpP, devpE, devpI, devm, devs, devg, drace)
