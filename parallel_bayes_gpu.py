@@ -186,18 +186,22 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             # for t in range(t_batches):
             #     plI = np.empty((len(X), len(init_params) * 
             plI = np.empty((len(X), timepoints_per_ic), dtype=np.float32)
+            plN = np.empty((len(X), 2, sim_params[2]))
+            plP = np.empty((len(X), 2, sim_params[2]))
+            plE = np.empty((len(X), 2, sim_params[2]+1))
         
             assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
             for blk in range(0,len(X),GPU_GROUP_SIZE):
             
                 if has_GPU:
-                    model(plI[blk:blk+GPU_GROUP_SIZE], X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num], TPB, num_SMs, max_sims_per_block,init_mode=init_mode)[-1]
+                    model(plI[blk:blk+GPU_GROUP_SIZE], plN[blk:blk+GPU_GROUP_SIZE], plP[blk:blk+GPU_GROUP_SIZE], 
+                          plE[blk:blk+GPU_GROUP_SIZE], X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num], 
+                          TPB, num_SMs, max_sims_per_block, init_mode=init_mode)
                 else:
                     plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num])[1][-1]
         
             #sys.exit()    
 
-            print("IC num {} plI {}".format(ic_num, plI))
             if LOG_PL:
                 plI[plI<bval] = bval
                 plI = np.log(plI)

@@ -311,7 +311,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
             plE[p,0,n] = E[p,ko,n]
           
 
-def pvSim(plI_main, matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init_mode="exp"):
+def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init_mode="exp"):
     print("Solver called")
     print((TPB, BPG))
     # Unpack local parameters
@@ -346,9 +346,6 @@ def pvSim(plI_main, matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init
     #plP = np.zeros((Threads,len(pT),L))
     #plE = np.zeros((Threads,len(pT),L+1))
     #plI = np.zeros((Threads,T//plT+1))
-    plN = np.zeros((Threads, 2, L))
-    plP = np.zeros((Threads, 2, L))
-    plE = np.zeros((Threads, 2, L+1))
 
     if init_mode == "exp":
         # Initialization - nodes at 1/2, 3/2 ... L-1/2
@@ -371,9 +368,9 @@ def pvSim(plI_main, matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init
     devN = cuda.to_device(N)
     devP = cuda.to_device(P)
     devE = cuda.to_device(E)
-    devpN = cuda.to_device(plN)
-    devpP = cuda.to_device(plP)
-    devpE = cuda.to_device(plE)
+    devpN = cuda.to_device(plN_main)
+    devpP = cuda.to_device(plP_main)
+    devpE = cuda.to_device(plE_main)
     devpI = cuda.to_device(plI_main)
     devm = cuda.to_device(matPar)
     devs = cuda.to_device(simPar)
@@ -387,21 +384,21 @@ def pvSim(plI_main, matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init
     print("tEvol took {} sec".format(time.time() - clock0))
     clock0 = time.time()
     plI_main[:] = devpI.copy_to_host()
-    plN = devpN.copy_to_host()
-    plP = devpP.copy_to_host()
-    plE = devpE.copy_to_host()
+    plN_main[:] = devpN.copy_to_host()
+    plP_main[:] = devpP.copy_to_host()
+    plE_main[:] = devpE.copy_to_host()
     print("Copy back took {} sec".format(time.time() - clock0))
     race = drace.copy_to_host()
     print(race[race != T//plT+1])
 
     # Re-dimensionalize
     plI_main /= dx**2*dt
-    plN /= dx**3
-    plP /= dx**3
-    plE /= dx
+    plN_main /= dx**3
+    plP_main /= dx**3
+    plE_main /= dx
     print(plI_main[:,0:6])
     print(list(np.sum(plI_main, axis=1)))
-    return (plN, plP, plE, plI_main)
+    return
 
 if __name__ == "__main__":
 
