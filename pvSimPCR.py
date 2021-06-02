@@ -338,64 +338,62 @@ def pvSim(plI_main, matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init
 
 
     #plI_main = np.zeros((Threads,(T//plT+1) * len(iniPar)))         # Arrays for plotting
-    count = 0
-    for ic in iniPar:
 
-        N   = np.zeros((Threads,3,L))              # Include prior steps and iter
-        P   = np.zeros((Threads,3,L))
-        E   = np.zeros((Threads,3,L+1))
-        #plN = np.zeros((Threads,len(pT),L))
-        #plP = np.zeros((Threads,len(pT),L))
-        #plE = np.zeros((Threads,len(pT),L+1))
-        plI = np.zeros((Threads,T//plT+1))
-        plN = np.zeros((Threads, 2, L))
-        plP = np.zeros((Threads, 2, L))
-        plE = np.zeros((Threads, 2, L+1))
+    N   = np.zeros((Threads,3,L))              # Include prior steps and iter
+    P   = np.zeros((Threads,3,L))
+    E   = np.zeros((Threads,3,L+1))
+    #plN = np.zeros((Threads,len(pT),L))
+    #plP = np.zeros((Threads,len(pT),L))
+    #plE = np.zeros((Threads,len(pT),L+1))
+    #plI = np.zeros((Threads,T//plT+1))
+    plN = np.zeros((Threads, 2, L))
+    plP = np.zeros((Threads, 2, L))
+    plE = np.zeros((Threads, 2, L+1))
 
-        if init_mode == "exp":
-            # Initialization - nodes at 1/2, 3/2 ... L-1/2
-            a,l = ic
-            a  *= dx3
-            l  /= dx
-            x   = np.arange(L) + 0.5
-            dN  = a *np.exp(-x/l)
+    if init_mode == "exp":
+        # Initialization - nodes at 1/2, 3/2 ... L-1/2
+        a,l = iniPar
+        a  *= dx3
+        l  /= dx
+        x   = np.arange(L) + 0.5
+        dN  = a *np.exp(-x/l)
     
-        elif init_mode == "points":
-            dN = ic * dx3
+    elif init_mode == "points":
+        dN = iniPar * dx3
+    elif init_mode == "continue":
+        pass
 
-        N0, P0 = matPar[:,0:2].T
-        N[:,0] = np.add.outer(N0, dN)
-        P[:,0] = np.add.outer(P0, dN)
-        #print("Incoming N[0]:", N[0])
-        clock0 = time.time()
-        devN = cuda.to_device(N)
-        devP = cuda.to_device(P)
-        devE = cuda.to_device(E)
-        devpN = cuda.to_device(plN)
-        devpP = cuda.to_device(plP)
-        devpE = cuda.to_device(plE)
-        devpI = cuda.to_device(plI)
-        devm = cuda.to_device(matPar)
-        devs = cuda.to_device(simPar)
-        devg = cuda.to_device(gridPar)
-        print("Loading data took {} sec".format(time.time() - clock0))
-        race = np.zeros(len(matPar) + 1)
-        drace = cuda.to_device(race)
-        clock0 = time.time()
-        tEvol[BPG,TPB](devN, devP, devE, devpN, devpP, devpE, devpI, devm, devs, devg, drace)
-        cuda.synchronize()
-        print("tEvol took {} sec".format(time.time() - clock0))
-    
-        clock0 = time.time()
-        plI = devpI.copy_to_host()
-        plN = devpN.copy_to_host()
-        plP = devpP.copy_to_host()
-        plE = devpE.copy_to_host()
-        print("Copy back took {} sec".format(time.time() - clock0))
-        race = drace.copy_to_host()
-        print(race[race != T//plT+1])
-        plI_main[:, (T//plT+1)*count:(T//plT+1)*(count+1)] = plI
-        count += 1
+    N0, P0 = matPar[:,0:2].T
+    N[:,0] = np.add.outer(N0, dN)
+    P[:,0] = np.add.outer(P0, dN)
+    #print("Incoming N[0]:", N[0])
+    clock0 = time.time()
+    devN = cuda.to_device(N)
+    devP = cuda.to_device(P)
+    devE = cuda.to_device(E)
+    devpN = cuda.to_device(plN)
+    devpP = cuda.to_device(plP)
+    devpE = cuda.to_device(plE)
+    devpI = cuda.to_device(plI_main)
+    devm = cuda.to_device(matPar)
+    devs = cuda.to_device(simPar)
+    devg = cuda.to_device(gridPar)
+    print("Loading data took {} sec".format(time.time() - clock0))
+    race = np.zeros(len(matPar) + 1)
+    drace = cuda.to_device(race)
+    clock0 = time.time()
+    tEvol[BPG,TPB](devN, devP, devE, devpN, devpP, devpE, devpI, devm, devs, devg, drace)
+    cuda.synchronize()
+    print("tEvol took {} sec".format(time.time() - clock0))
+    clock0 = time.time()
+    plI_main[:] = devpI.copy_to_host()
+    plN = devpN.copy_to_host()
+    plP = devpP.copy_to_host()
+    plE = devpE.copy_to_host()
+    print("Copy back took {} sec".format(time.time() - clock0))
+    race = drace.copy_to_host()
+    print(race[race != T//plT+1])
+
     # Re-dimensionalize
     plI_main /= dx**2*dt
     plN /= dx**3

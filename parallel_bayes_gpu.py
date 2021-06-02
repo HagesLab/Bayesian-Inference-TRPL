@@ -160,7 +160,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 
         N   = refineGrid(N, refs[nref])                      # Refine grid
         Np  = np.prod(refs[nref])                            # Params per set
-        lnP = np.zeros(len(N))                               # Likelihoods
+        P = np.zeros(len(N))                               # Likelihoods
         print("ref level, N: ", nref, len(N))
 
         X = np.empty((len(N), len(refs[0])))
@@ -173,36 +173,42 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             #X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
             X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
 
-
+        timepoints_per_ic = sim_params[3] // sim_params[4] + 1
+        assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
         ## OVERRIDE: MAKE SRH TAUS EQUAL
         #X[:,8] = X[:,7]
-        X[:,2] = X[:,3]
+        #X[:,2] = X[:,3]
+        for ic_num in range(len(init_params)):
+            times = data[0][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
+            values = data[1][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
+            std = data[2][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
 
-            #plI = np.empty((len(X), sim_params[3] // sim_params[4] + 1), dtype=np.float32)
-
-        plI = np.empty((len(X), len(init_params) *(sim_params[3] // sim_params[4] + 1)), dtype=np.float32)
-        times, values, std = data        
-        assert len(plI[0]) == len(values), "Error: model time grid mismatch: {} vs {}".format(len(plI[0]), len(values))
-        for blk in range(0,len(X),GPU_GROUP_SIZE):
+            # for t in range(t_batches):
+            #     plI = np.empty((len(X), len(init_params) * 
+            plI = np.empty((len(X), timepoints_per_ic), dtype=np.float32)
+        
+            assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
+            for blk in range(0,len(X),GPU_GROUP_SIZE):
             
-            if has_GPU:
-                model(plI[blk:blk+GPU_GROUP_SIZE], X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params, TPB, num_SMs, max_sims_per_block,init_mode=init_mode)[-1]
-            else:
-                plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params)[1][-1]
+                if has_GPU:
+                    model(plI[blk:blk+GPU_GROUP_SIZE], X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num], TPB, num_SMs, max_sims_per_block,init_mode=init_mode)[-1]
+                else:
+                    plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num])[1][-1]
         
-        #sys.exit()    
-        if LOG_PL:
-            plI[plI<bval] = bval
-            plI = np.log(plI)
-        # TODO: Match experimental data timesteps to model timesteps
+            #sys.exit()    
 
-        # Calculate errors
-        plI -= values
-        sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI) ** 2, axis=0) # Total error per timestep
-        P = np.zeros(len(X)) # log of P's for block
+            print("IC num {} plI {}".format(ic_num, plI))
+            if LOG_PL:
+                plI[plI<bval] = bval
+                plI = np.log(plI)
+            # TODO: Match experimental data timesteps to model timesteps
+
+            # Calculate errors
+            plI -= values
+            sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI) ** 2, axis=0) # Total error per timestep/observation
         
-        sig_sq *= 2
-        P -= np.sum((plI)**2 / sig_sq + np.log(np.pi*sig_sq)/2, axis=1)
+            sig_sq *= 2
+            P -= np.sum((plI)**2 / sig_sq + np.log(np.pi*sig_sq)/2, axis=1)
 
         """
         UNC_GROUP_SIZE = int(1e8 / len(N))     
@@ -217,8 +223,6 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
                 sg2  = 2*(sig.max()**2 + std[i]**2)
                 Pbk -= (F-values[i])**2 / sg2 + np.log(np.pi*sg2)/2
             
-        #lnP[n:n+Np] = Pbk
-        #lnP = Pbk
         """    
         # Normalization scheme - to ensure that np.sum(P) is never zero due to mass underflow
         # First, shift lnP's up so max lnP is zero, ensuring at least one nonzero P
@@ -275,16 +279,16 @@ def get_initpoints(init_file, scale_f=1e-21):
 
 if __name__ == "__main__":
     # simPar
-    #Time    = 250                                 # Final time (ns)
-    #Length = 2000
-    Time    = 2000
-    Length  = 311                            # Length (nm)
+    Time    = 250                                 # Final time (ns)
+    Length = 2000
+    #Time    = 2000
+    #Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
-    #T   = 8000
-    T   = 5600000                                # Time points
-    #plT = 8
-    plT = 70                                  # Set PL interval (dt)
+    T   = 8000
+    #T   = 5600000                                # Time points
+    plT = 8
+    #plT = 70                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
     MAX = 500                                  # Max iterations
@@ -307,18 +311,18 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,4,4,4,4,4,1,4,4,1])
+    ref1 = np.array([1,2,2,2,2,2,1,2,2,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,16,16,1,16,1,1])
     ref3 = np.array([1,5,1,5,5,5,1,5,5,1])
     ref5 = np.array([1,2,1,6,6,6,1,6,6,1])
-    refs = np.array([ref5])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref2])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e13, 1, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 100, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
-    #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
-    #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
+    #minX = np.array([1e8, 1e13, 1, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
+    #maxX = np.array([1e8, 1e17, 100, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
+    minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
+    maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
 
     LOG_PL = True
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
