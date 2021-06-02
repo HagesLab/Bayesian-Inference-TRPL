@@ -315,7 +315,7 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,2,2,2,2,2,1,2,2,1])
+    ref1 = np.array([1,4,4,4,4,4,1,4,4,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,16,16,1,16,1,1])
     ref3 = np.array([1,5,1,5,5,5,1,5,5,1])

@@ -246,7 +246,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
     rate = matPar[:,4]
     BPG, TPB = gridPar
     ind  = 0
-    for t in range(T+1):                            # Outer time loop
+    for t in range(T):                            # Outer time loop
     #for t in range(10):
         #if t%100 ==0 and cuda.grid(1) == 0:
         #    print('time: ', t)
@@ -277,12 +277,11 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
                 race[-1] = 1
                 break
                 
-            
-            if t%plT == 0:
+            if (t+1)%plT == 0:
                 for y in range(p, p+len(N[p:p+MSPB])):
                     Sum = 0
                     for n in range(L):
-                        Sum += N[y,k,n]*P[y,k,n]-N0[y]*P0[y]
+                        Sum += N[y,kp,n]*P[y,kp,n]-N0[y]*P0[y]
                     plI[y,t//plT] = rate[y]*Sum
 
             # Record specified timesteps, for debug mode
@@ -301,14 +300,14 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
     th = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
     for p in range(th,len(N), cuda.gridsize(1)):
         for n in range(len(N[0,0])):
-            plN[p,1,n] = N[p,k,n]
-            plN[p,0,n] = N[p,ko,n] 
-            plP[p,1,n] = P[p,k,n]
-            plP[p,0,n] = P[p,ko,n]
+            plN[p,1,n] = N[p,kp,n]
+            plN[p,0,n] = N[p,k,n] 
+            plP[p,1,n] = P[p,kp,n]
+            plP[p,0,n] = P[p,k,n]
 
         for n in range(len(E[0,0])):
-            plE[p,1,n] = E[p,k,n]
-            plE[p,0,n] = E[p,ko,n]
+            plE[p,1,n] = E[p,kp,n]
+            plE[p,0,n] = E[p,k,n]
           
 
 def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init_mode="exp"):
@@ -371,7 +370,11 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     devpN = cuda.to_device(plN_main)
     devpP = cuda.to_device(plP_main)
     devpE = cuda.to_device(plE_main)
-    devpI = cuda.to_device(plI_main)
+    if init_mode != "continue": # Calculate "initial condition" PL at t=0
+        plI_main[:,0] = matPar[:,4]*np.sum((N[:,0]*P[:,0]).T - N0*P0, axis=0)
+        devpI = cuda.to_device(np.ascontiguousarray(plI_main[:,1:]))
+    else:
+        devpI = cuda.to_device(plI_main)
     devm = cuda.to_device(matPar)
     devs = cuda.to_device(simPar)
     devg = cuda.to_device(gridPar)
@@ -383,7 +386,10 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     cuda.synchronize()
     print("tEvol took {} sec".format(time.time() - clock0))
     clock0 = time.time()
-    plI_main[:] = devpI.copy_to_host()
+    if init_mode != "continue":
+        plI_main[:,1:] = devpI.copy_to_host()
+    else:
+        plI_main[:] = devpI.copy_to_host()
     plN_main[:] = devpN.copy_to_host()
     plP_main[:] = devpP.copy_to_host()
     plE_main[:] = devpE.copy_to_host()
@@ -398,6 +404,8 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     plE_main /= dx
     print(plI_main[:,0:6])
     print(list(np.sum(plI_main, axis=1)))
+    print("plN", plN_main)
+    print("plP", plP_main)
     return
 
 if __name__ == "__main__":
