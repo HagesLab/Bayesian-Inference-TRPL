@@ -10,9 +10,8 @@ from numba import cuda, float32 as floatX
 import time
 
 @cuda.jit(device=True)
-def norm2(A0,A1,A2,b,c,buffer, err, TPB):
+def norm2(A0, A1, A2, b, c, buffer, err, num_sims, TPB):
     N = len(b)
-    num_sims = len(A0[0])
     thr = cuda.threadIdx.x
     for y in range(thr, num_sims, TPB):
         buffer[0, y] = abs(A1[0, y]*c[0, y]+A0[0, y]*c[1, y] - b[0, y])
@@ -38,11 +37,10 @@ def norm2(A0,A1,A2,b,c,buffer, err, TPB):
         err[y] = buffer[0, y]/buffer[N, y]
 
 @cuda.jit(device=True)
-def pcreduce(ld, d, ud, B, c, buffer, TPB):
+def pcreduce(ld, d, ud, B, c, buffer, num_sims, TPB):
 
     rf = 1
     N = len(ld)
-    num_sims = len(ld[0])
     thr = cuda.threadIdx.x
     while N / rf > 2:
         for i in range(thr, N, TPB):
@@ -80,9 +78,9 @@ def pcreduce(ld, d, ud, B, c, buffer, TPB):
     return
 
 @cuda.jit(device=True)
-def shared_array_max(arr):
+def shared_array_max(arr, num_sims):
     m = arr[0]
-    for i in range(1,len(arr)):
+    for i in range(1,num_sims):
         if arr[i] > m:
             m = arr[i]
 
@@ -121,7 +119,6 @@ def iterate(N, P, E, matPar, par, p, t):
     errN = cuda.shared.array(shape=(MSPB), dtype=floatX)
     errP = cuda.shared.array(shape=(MSPB), dtype=floatX)
     th = cuda.threadIdx.x                      # Set thread ID
-
     for n in range(th, L, TPB):
         for y in range(num_sims):
             Nk[n, y] = N[y,k,n]                        # Initialize tmp values
@@ -134,6 +131,8 @@ def iterate(N, P, E, matPar, par, p, t):
     for y in range(th, num_sims, TPB):
         A0[-1, y] = 0
         A2[0, y] = 0
+
+    for y in range(th, MSPB, TPB):
         errN[y] = 0
         errP[y] = 0
 
@@ -145,25 +144,13 @@ def iterate(N, P, E, matPar, par, p, t):
                 A0[n-1, y]   = DN[y]*(-Ek[n, y]/2 - 1)
                 A2[n, y] = DN[y]*(+Ek[n, y]/2 - 1)
         cuda.syncthreads()
-        #if p == 1 and t == 0 and iters == 0:
-        #    if th == 0: 
-        #        print("A0[L-1] after")
-        #        print(A0[-1])
-        #        print("A2 after")
-        #    print(A2[th])
-        #cuda.syncthreads()
+
         for n in range(th, L, TPB):
             for y in range(num_sims):
                 tp = Nk[n, y]*tauP[y] + Pk[n, y] * tauN[y]
-                np = Nk[n, y]*Pk[n, y] - N0[y]*P0[y]
+                np = max(Nk[n, y]*Pk[n, y] - N0[y]*P0[y],0)
                 ds = -rate[y]*Pk[n, y] - (Pk[n, y]*tp - tauP[y]*np)/tp**2
                 A1[n, y] = a0 - A0[n-1, y] - A2[(n+1) % L, y] - ds
-                #if iters == 0 and p == 0 and t == 0:
-                #    if th == 0:
-                #        print("y")
-                #        print(y)
-                #        print("A1")
-                #    print(A1[th,y])
                 bb[n, y] = -(rate[y] + 1/tp)*np - ds*Nk[n, y] - bN[n, y]
         cuda.syncthreads()
 
@@ -174,15 +161,13 @@ def iterate(N, P, E, matPar, par, p, t):
             A1[-1, y] -= dsL
             bb[0, y]  -= sr0[y]*(Nk[ 0, y]*Pk[ 0, y]-N0[y]*P0[y])/(Nk[ 0, y]+Pk[ 0, y]) + ds0*Nk[ 0, y]
             bb[-1, y] -= srL[y]*(Nk[-1, y]*Pk[-1, y]-N0[y]*P0[y])/(Nk[-1, y]+Pk[-1, y]) + dsL*Nk[-1, y]
-
         cuda.syncthreads()
-        norm2(A0,A1,A2,bb,Nk,buffer, errN,TPB)
-        cuda.syncthreads()
-
-        pcreduce(A2, A1, A0, bb, Nk, buffer, TPB)
-
+        norm2(A0, A1, A2, bb, Nk, buffer, errN, num_sims, TPB)
         cuda.syncthreads()
 
+        pcreduce(A2, A1, A0, bb, Nk, buffer, num_sims, TPB)
+
+        cuda.syncthreads()
         for n in range(1+th, L, TPB):                    # Solve for P
             for y in range(num_sims):
                 A0[n-1, y]   = DP[y]*(+Ek[n, y]/2 - 1)
@@ -190,7 +175,7 @@ def iterate(N, P, E, matPar, par, p, t):
         cuda.syncthreads()
         for n in range(th, L, TPB):
             for y in range(num_sims):
-                np = Nk[n, y]*Pk[n, y] - N0[y]*P0[y]
+                np = max(Nk[n, y]*Pk[n, y] - N0[y]*P0[y],0)
                 tp = Nk[n, y]*tauP[y] + Pk[n, y]*tauN[y]
                 ds = -rate[y]*Nk[n, y] - (Nk[n, y]*tp - tauN[y]*np)/tp**2
                 A1[n, y] = a0 - A0[n-1, y] - A2[(n+1) % L, y] - ds
@@ -204,9 +189,9 @@ def iterate(N, P, E, matPar, par, p, t):
             bb[0, y]  -= sr0[y]*(Nk[ 0, y]*Pk[ 0, y]-N0[y]*P0[y])/(Nk[ 0, y]+Pk[ 0, y]) + ds0*Pk[ 0, y]
             bb[-1, y] -= srL[y]*(Nk[-1, y]*Pk[-1, y]-N0[y]*P0[y])/(Nk[-1, y]+Pk[-1, y]) + dsL*Pk[-1, y]
         cuda.syncthreads()
-        norm2(A0,A1,A2,bb,Pk, buffer, errP,TPB)
+        norm2(A0, A1, A2, bb, Pk, buffer, errP, num_sims, TPB)
         cuda.syncthreads()
-        pcreduce(A2, A1, A0, bb, Pk, buffer, TPB)
+        pcreduce(A2, A1, A0, bb, Pk, buffer, num_sims, TPB)
         cuda.syncthreads()
 
         for n in range(1+th, L, TPB):                    # Solve for E
@@ -217,23 +202,17 @@ def iterate(N, P, E, matPar, par, p, t):
         cuda.syncthreads()
 
         #if (errN[0] < TOL and errP[0] < TOL): break
-        max_errN = shared_array_max(errN)
-        max_errP = shared_array_max(errP)
+        max_errN = shared_array_max(errN, num_sims)
+        max_errP = shared_array_max(errP, num_sims)
         cuda.syncthreads()
         if (max_errN < TOL and max_errP < TOL): break
-    
+
     for n in range(th, L, TPB):
         for y in range(num_sims):
             N[y,kp,n] = Nk[n, y]                         # Copy back tmp values
             P[y,kp,n] = Pk[n, y]
             E[y,kp,n] = Ek[n, y]
     cuda.syncthreads()
-    #if t == 0 and p == 1:                
-    #   if th == 0: 
-    #       print("Iters=")
-    #       print(iters)
-    #cuda.syncthreads()
-
 
     return iters+1
 
@@ -246,8 +225,8 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
     rate = matPar[:,4]
     BPG, TPB = gridPar
     ind  = 0
-    for t in range(T):                            # Outer time loop
-    #for t in range(10):
+    for t in range(T+1):                            # Outer time loop
+    #for t in range(1000):
         #if t%100 ==0 and cuda.grid(1) == 0:
         #    print('time: ', t)
         if t == 0:                                  # Select integration order
@@ -263,11 +242,10 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
             #if t==0 and cuda.grid(1) == 0:
             #    print('block', blk, 'Starting p: ', blk*BPG)
             if cuda.threadIdx.x == 0: race[p] += 1
-            #if p == 0 and cuda.threadIdx.x == 0: 
-            #    print("Running #0")
-            #cuda.syncthreads()
 
-            iters = iterate(N[p:p+MSPB], P[p:p+MSPB], E[p:p+MSPB], matPar[p:p+MSPB], par, p, t)
+            # Assign #MSPB or #remaining sims to block
+            p_lim = min(p+MSPB, len(matPar)) 
+            iters = iterate(N[p:p_lim], P[p:p_lim], E[p:p_lim], matPar[p:p_lim], par, p, t)
 
             cuda.syncthreads()
             if iters >= MAX:
@@ -277,11 +255,11 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
                 race[-1] = 1
                 break
                 
-            if (t+1)%plT == 0:
-                for y in range(p, p+len(N[p:p+MSPB])):
+            if t%plT == 0:
+                for y in range(p, p_lim):
                     Sum = 0
                     for n in range(L):
-                        Sum += N[y,kp,n]*P[y,kp,n]-N0[y]*P0[y]
+                        Sum += N[y,k,n]*P[y,k,n]-N0[y]*P0[y]
                     plI[y,t//plT] = rate[y]*Sum
 
             # Record specified timesteps, for debug mode
@@ -370,11 +348,7 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     devpN = cuda.to_device(plN_main)
     devpP = cuda.to_device(plP_main)
     devpE = cuda.to_device(plE_main)
-    if init_mode != "continue": # Calculate "initial condition" PL at t=0
-        plI_main[:,0] = matPar[:,4]*np.sum((N[:,0]*P[:,0]).T - N0*P0, axis=0)
-        devpI = cuda.to_device(np.ascontiguousarray(plI_main[:,1:]))
-    else:
-        devpI = cuda.to_device(plI_main)
+    devpI = cuda.to_device(plI_main)
     devm = cuda.to_device(matPar)
     devs = cuda.to_device(simPar)
     devg = cuda.to_device(gridPar)
@@ -386,10 +360,7 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     cuda.synchronize()
     print("tEvol took {} sec".format(time.time() - clock0))
     clock0 = time.time()
-    if init_mode != "continue":
-        plI_main[:,1:] = devpI.copy_to_host()
-    else:
-        plI_main[:] = devpI.copy_to_host()
+    plI_main[:] = devpI.copy_to_host()
     plN_main[:] = devpN.copy_to_host()
     plP_main[:] = devpP.copy_to_host()
     plE_main[:] = devpE.copy_to_host()
@@ -404,8 +375,8 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     plE_main /= dx
     print(plI_main[:,0:6])
     print(list(np.sum(plI_main, axis=1)))
-    print("plN", plN_main)
-    print("plP", plP_main)
+    #print("plN", plN_main)
+    #print("plP", plP_main)
     return
 
 if __name__ == "__main__":

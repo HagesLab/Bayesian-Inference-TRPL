@@ -120,6 +120,7 @@ def export_marginal_P(marP, pN, minX, maxX, param_names):
         X_log = minX[m] * (maxX[m]/minX[m])**((im)/pN[m])
         X =  X_lin * (1-do_log[m]) + X_log * do_log[m]
 
+        print(np.vstack((X, marP[m])).T)
         np.savetxt(wdir + out_filename + "_BAYRES_" + param_names[m] + ".csv", np.vstack((X, marP[m])).T, delimiter=",")
 
     return        
@@ -177,7 +178,8 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
         assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
         ## OVERRIDE: MAKE SRH TAUS EQUAL
         #X[:,8] = X[:,7]
-        #X[:,2] = X[:,3]
+        if OVERRIDE_EQUAL_MU:
+            X[:,2] = X[:,3]
         for ic_num in range(len(init_params)):
             times = data[0][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
             values = data[1][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
@@ -204,16 +206,46 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 
             if LOG_PL:
                 plI[plI<bval] = bval
-                plI = np.log(plI)
+                plI = np.log10(plI)
             # TODO: Match experimental data timesteps to model timesteps
+            #print(X[16, 7])
+            np.save(r"/home/cfai2304/super_bayes/{}{}.npy".format(sys.argv[3], ic_num), plI)
+
+            print("Pre-normalize")
+            print(plI)
+            print(values)
+
+            if NORMALIZE:
+                plI = plI.T
+                if LOG_PL:
+                    plI -= plI[0]
+                    values -= values[0]
+                else:
+                    plI /= plI[0]
+                    values /= values[0]
+                plI = plI.T
+
+                # Discard t=0 value, since all normalizations are wrt those
+                plI = plI[:,1:]
+                values = values[1:]
+
+            print("Post normalize")
+            print(plI[:, -3:])
+            print(list(values))
 
             # Calculate errors
             plI -= values
+            print("After errors")
+            print(plI[:, -3:])
+            print("Sum of errors")
+            print(list(np.sum(plI, axis=1)))
+
             sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI) ** 2, axis=0) # Total error per timestep/observation
-        
+            sig_sq = 0.5
+            #print(sig_sq)
             sig_sq *= 2
             P -= np.sum((plI)**2 / sig_sq + np.log(np.pi*sig_sq)/2, axis=1)
-
+            print(list(P))
         """
         UNC_GROUP_SIZE = int(1e8 / len(N))     
         for i in range(0, len(plI[0]), UNC_GROUP_SIZE):
@@ -268,7 +300,7 @@ def get_data(exp_file, scale_f=1, sample_f=1):
     if LOG_PL:
         PL[PL < bval] = bval
         uncertainty /= PL
-        PL = np.log(PL)
+        PL = np.log10(PL)
     return (t, PL, uncertainty)
 
 def get_initpoints(init_file, scale_f=1e-21):
@@ -290,12 +322,14 @@ if __name__ == "__main__":
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
     T   = 8000
-    #T   = 5600000                                # Time points
+    #T   = 3200000                                # Time points
+    #T   = 8000000
     plT = 8
-    #plT = 70                                  # Set PL interval (dt)
+    #plT = 40                                  # Set PL interval (dt)
+    #plT = 100
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
-    MAX = 500                                  # Max iterations
+    MAX = 1000                                  # Max iterations
     pT = tuple(np.array(pT)*T//100)
     simPar = (Length, Time, L, T, plT, pT, tol, MAX)
     
@@ -315,23 +349,25 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,4,4,4,4,4,1,4,4,1])
+    ref1 = np.array([1,2,1,2,2,2,1,2,2,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,16,16,1,16,1,1])
-    ref3 = np.array([1,5,1,5,5,5,1,5,5,1])
+    ref3 = np.array([1,1,1,1,1,1,1,32,1,1])
     ref5 = np.array([1,2,1,6,6,6,1,6,6,1])
-    refs = np.array([ref2])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref4])#, ref2, ref3])                         # Refinements
     
 
-    #minX = np.array([1e8, 1e13, 1, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
-    #maxX = np.array([1e8, 1e17, 100, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
-    minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
-    maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
+    #minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])                        # Smallest param v$
+    #maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1000, 871, 10**-1])
+    minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 20, 10**-1])
+    maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 20, 10**-1])
 
+    OVERRIDE_EQUAL_MU = True
     LOG_PL = True
+    NORMALIZE = False
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
-    bval = 1e15 * scale_f
+    bval = 1 * scale_f
     include_neighbors = False
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
@@ -352,6 +388,9 @@ if __name__ == "__main__":
         assert (len(maxX) == num_params), "Missing max param values"  
         assert all(minX > 0), "Invalid param values"
         assert all(minX <= maxX), "Min params larger than max params"
+        if OVERRIDE_EQUAL_MU:
+            for ref in refs:
+                assert ref[2] == 1, "Equal mu override is on but mu_n is being subdivided"
 
         for i in range(len(refs[0])):
             if not refs[0,i] == 1:
@@ -359,6 +398,7 @@ if __name__ == "__main__":
         # TODO: Additional checks involving refs
             
         print("Starting simulations with the following parameters:")
+        print("Equal mu override: {}".format(OVERRIDE_EQUAL_MU))
         for i in range(num_params):
             if minX[i] == maxX[i]:
                 print("{}: {}".format(param_names[i], minX[i]))
@@ -371,6 +411,9 @@ if __name__ == "__main__":
             print("{}: {}".format(param_names[i], refs[:,i]))        
         e_data = get_data(experimental_data_filename, scale_f=scale_f, sample_f = sample_factor) 
         print("\nExperimental data - {}".format(experimental_data_filename))
+        print("Cutoff val: {}".format(bval))
+        print("Sample factor: {}".format(sample_factor))
+        print("Normalize data: {}".format(NORMALIZE))
         print(e_data)
         print("Output: {}".format(out_filename))
         try:
