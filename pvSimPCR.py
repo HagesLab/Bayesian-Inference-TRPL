@@ -102,7 +102,7 @@ def iterate(N, P, E, matPar, par, p, t):
     tauP = matPar[:,8]
     Lambda = matPar[:,9]
     #N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda = matPar
-    a0, a1, a2, k, kp, ko, L, tol, MAX, TPB = par
+    a0, a1, a2, a3, a4, a5, k, kp, ko, ko2, ko3, ko4, L, tol, MAX, TPB = par
     num_sims = len(N)
     TOL  = 10.0**(-tol)
     Nk = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
@@ -124,9 +124,9 @@ def iterate(N, P, E, matPar, par, p, t):
             Nk[n, y] = N[y,k,n]                        # Initialize tmp values
             Pk[n, y] = P[y,k,n]
             Ek[n, y] = E[y,k,n]
-            bN[n, y] = a1*Nk[n, y] + a2*N[y,ko,n]
-            bP[n, y] = a1*Pk[n, y] + a2*P[y,ko,n]
-            bE[n, y] = a1*Ek[n, y] + a2*E[y,ko,n]
+            bN[n, y] = a1*Nk[n, y] + a2*N[y,ko,n] + a3*N[y,ko2,n] + a4*N[y,ko3,n] + a5*N[y,ko4,n]
+            bP[n, y] = a1*Pk[n, y] + a2*P[y,ko,n] + a3*P[y,ko2,n] + a4*P[y,ko3,n] + a5*P[y,ko4,n]
+            bE[n, y] = a1*Ek[n, y] + a2*E[y,ko,n] + a3*E[y,ko2,n] + a4*E[y,ko3,n] + a5*E[y,ko4,n]
 
     for y in range(th, num_sims, TPB):
         A0[-1, y] = 0
@@ -148,7 +148,7 @@ def iterate(N, P, E, matPar, par, p, t):
         for n in range(th, L, TPB):
             for y in range(num_sims):
                 tp = Nk[n, y]*tauP[y] + Pk[n, y] * tauN[y]
-                np = max(Nk[n, y]*Pk[n, y] - N0[y]*P0[y],0)
+                np = Nk[n, y]*Pk[n, y] - N0[y]*P0[y]
                 ds = -rate[y]*Pk[n, y] - (Pk[n, y]*tp - tauP[y]*np)/tp**2
                 A1[n, y] = a0 - A0[n-1, y] - A2[(n+1) % L, y] - ds
                 bb[n, y] = -(rate[y] + 1/tp)*np - ds*Nk[n, y] - bN[n, y]
@@ -175,7 +175,7 @@ def iterate(N, P, E, matPar, par, p, t):
         cuda.syncthreads()
         for n in range(th, L, TPB):
             for y in range(num_sims):
-                np = max(Nk[n, y]*Pk[n, y] - N0[y]*P0[y],0)
+                np = Nk[n, y]*Pk[n, y] - N0[y]*P0[y]
                 tp = Nk[n, y]*tauP[y] + Pk[n, y]*tauN[y]
                 ds = -rate[y]*Nk[n, y] - (Nk[n, y]*tp - tauN[y]*np)/tp**2
                 A1[n, y] = a0 - A0[n-1, y] - A2[(n+1) % L, y] - ds
@@ -230,13 +230,22 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
         #if t%100 ==0 and cuda.grid(1) == 0:
         #    print('time: ', t)
         if t == 0:                                  # Select integration order
-            a0 = 1.0; a1 = -1.0; a2 = 0.0           # Euler step
+            a0 = 1.0; a1 = -1.0; a2 = 0.0; a3 = 0.0; a4 = 0.0; a5 = 0.0           # Euler step
+        elif t == 1:
+            a0 = 1.5; a1 = -2.0; a2 = 0.5; a3 = 0.0; a4 = 0.0; a5 = 0.0           # 2nd order implicit
+        elif t == 2:
+            a0 = 11/6; a1 = -3.0; a2 = 1.5; a3 = -1/3; a4 = 0.0; a5 = 0.0
+        elif t == 3:
+            a0 = 25/12; a1 = -4.0; a2 = 3.0; a3 = -4/3; a4 = 0.25; a5 = 0.0
         else:
-            a0 = 1.5; a1 = -2.0; a2 = 0.5           # 2nd order implicit
-        kp  = (t+1)%3                               # new time
-        k   = (t)  %3                               # current time
-        ko  = (t-1)%3                               # old time
-        par = (a0, a1, a2, k, kp, ko, L, tol, MAX, TPB)
+            a0 = 137/60; a1 = -5.0; a2 = 5.0; a3 = -10/3; a4 = 1.25; a5 = -0.2
+        kp  = (t+1)%6                               # new time
+        k   = (t)  %6                               # current time
+        ko  = (t-1)%6                               # old time
+        ko2 = (t-2)%6
+        ko3 = (t-3)%6
+        ko4 = (t-4)%6
+        par = (a0, a1, a2, a3, a4, a5, k, kp, ko, ko2, ko3, ko4, L, tol, MAX, TPB)
         for p in range(cuda.blockIdx.x*MSPB, len(matPar), BPG*MSPB): # Use blocks to look over param sets
         #for blk in range(1):
             #if t==0 and cuda.grid(1) == 0:
@@ -316,9 +325,9 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
 
     #plI_main = np.zeros((Threads,(T//plT+1) * len(iniPar)))         # Arrays for plotting
 
-    N   = np.zeros((Threads,3,L))              # Include prior steps and iter
-    P   = np.zeros((Threads,3,L))
-    E   = np.zeros((Threads,3,L+1))
+    N   = np.zeros((Threads,6,L))              # Include prior steps and iter
+    P   = np.zeros((Threads,6,L))
+    E   = np.zeros((Threads,6,L+1))
     #plN = np.zeros((Threads,len(pT),L))
     #plP = np.zeros((Threads,len(pT),L))
     #plE = np.zeros((Threads,len(pT),L+1))
