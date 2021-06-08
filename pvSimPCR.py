@@ -7,6 +7,7 @@ Created on Sat Dec 19 15:05:30 2020
 """
 import numpy as np
 from numba import cuda, float32 as floatX
+from numba import float64 as floatY
 import time
 
 @cuda.jit(device=True)
@@ -105,19 +106,19 @@ def iterate(N, P, E, matPar, par, p, t):
     a0, a1, a2, a3, a4, a5, k, kp, ko, ko2, ko3, ko4, L, tol, MAX, TPB = par
     num_sims = len(N)
     TOL  = 10.0**(-tol)
-    Nk = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
-    Pk = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
-    Ek = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
-    bN = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
-    bP = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
-    bE = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
-    bb = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
-    A0 = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
-    A1 = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
-    A2 = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatX)
-    buffer = cuda.shared.array(shape=(BuSIZ, MSPB), dtype=floatX)
-    errN = cuda.shared.array(shape=(MSPB), dtype=floatX)
-    errP = cuda.shared.array(shape=(MSPB), dtype=floatX)
+    Nk = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatY)
+    Pk = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatY)
+    Ek = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatY)
+    bN = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatY)
+    bP = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatY)
+    bE = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatY)
+    bb = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatY)
+    A0 = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatY)
+    A1 = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatY)
+    A2 = cuda.shared.array(shape=(SIZ, MSPB), dtype=floatY)
+    buffer = cuda.shared.array(shape=(BuSIZ, MSPB), dtype=floatY)
+    errN = cuda.shared.array(shape=(MSPB), dtype=floatY)
+    errP = cuda.shared.array(shape=(MSPB), dtype=floatY)
     th = cuda.threadIdx.x                      # Set thread ID
     for n in range(th, L, TPB):
         for y in range(num_sims):
@@ -231,14 +232,14 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
         #    print('time: ', t)
         if t == 0:                                  # Select integration order
             a0 = 1.0; a1 = -1.0; a2 = 0.0; a3 = 0.0; a4 = 0.0; a5 = 0.0           # Euler step
-        elif t == 1:
+        else: #elif t == 1:
             a0 = 1.5; a1 = -2.0; a2 = 0.5; a3 = 0.0; a4 = 0.0; a5 = 0.0           # 2nd order implicit
-        elif t == 2:
-            a0 = 11/6; a1 = -3.0; a2 = 1.5; a3 = -1/3; a4 = 0.0; a5 = 0.0
-        elif t == 3:
-            a0 = 25/12; a1 = -4.0; a2 = 3.0; a3 = -4/3; a4 = 0.25; a5 = 0.0
-        else:
-            a0 = 137/60; a1 = -5.0; a2 = 5.0; a3 = -10/3; a4 = 1.25; a5 = -0.2
+        #elif t == 2:
+        #    a0 = 11/6; a1 = -3.0; a2 = 1.5; a3 = -1/3; a4 = 0.0; a5 = 0.0
+        #elif t == 3:
+        #    a0 = 25/12; a1 = -4.0; a2 = 3.0; a3 = -4/3; a4 = 0.25; a5 = 0.0
+        #else:
+        #    a0 = 137/60; a1 = -5.0; a2 = 5.0; a3 = -10/3; a4 = 1.25; a5 = -0.2
         kp  = (t+1)%6                               # new time
         k   = (t)  %6                               # current time
         ko  = (t-1)%6                               # old time
@@ -304,6 +305,7 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     Length, Time, L, T, plT, pT, tol, MAX = simPar
     dx = Length/L
     dt = Time/T
+    print("DT", dt)
     simPar = (L, T, tol, MAX, plT, *pT)
     gridPar = (BPG, *TPB)
     global SIZ 
@@ -375,7 +377,7 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     plE_main[:] = devpE.copy_to_host()
     print("Copy back took {} sec".format(time.time() - clock0))
     race = drace.copy_to_host()
-    print(race[race != T//plT+1])
+    print(race)
 
     # Re-dimensionalize
     plI_main /= dx**2*dt

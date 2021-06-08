@@ -209,8 +209,8 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
                 plI = np.log10(plI)
             # TODO: Match experimental data timesteps to model timesteps
             #print(X[16, 7])
-            np.save(r"/home/cfai2304/super_bayes/{}{}.npy".format(sys.argv[3], ic_num), plI)
-
+            #np.save(r"/home/cfai2304/super_bayes/{}{}.npy".format("5th", ic_num), plI)
+            #np.savetxt(r"/home/cfai2304/super_bayes/plI.csv", plI, delimiter=",")
             print("Pre-normalize")
             print(plI)
             print(values)
@@ -240,7 +240,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             print("Sum of errors")
             print(list(np.sum(plI, axis=1)))
 
-            sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI) ** 2, axis=0) # Total error per timestep/observation
+            #sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI) ** 2, axis=0) # Total error per timestep/observation
             sig_sq = 0.5
             #print(sig_sq)
             sig_sq *= 2
@@ -315,18 +315,16 @@ def get_initpoints(init_file, scale_f=1e-21):
 
 if __name__ == "__main__":
     # simPar
-    Time    = 250                                 # Final time (ns)
-    Length = 2000
-    #Time    = 2000
-    #Length  = 311                            # Length (nm)
+    #Time    = 250                                 # Final time (ns)
+    #Length = 2000
+    Time    = 2000
+    Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
-    T   = 8000
-    #T   = 3200000                                # Time points
-    #T   = 8000000
-    plT = 8
-    #plT = 40                                  # Set PL interval (dt)
-    #plT = 100
+    #T   = 512000
+    T   = 3200000                                # Time points
+    #plT = 512
+    plT = 40                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
     MAX = 1000                                  # Max iterations
@@ -352,22 +350,22 @@ if __name__ == "__main__":
     ref1 = np.array([1,2,1,2,2,2,1,2,2,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,16,16,1,16,1,1])
-    ref3 = np.array([1,1,1,1,1,1,1,32,1,1])
+    ref3 = np.array([1,1,1,1,1,1,1,2,1,1])
     ref5 = np.array([1,2,1,6,6,6,1,6,6,1])
-    refs = np.array([ref4])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
 
-    #minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])                        # Smallest param v$
-    #maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1000, 871, 10**-1])
-    minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 20, 10**-1])
-    maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 20, 10**-1])
+    minX = np.array([1e8, 1e13, 20, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
+    #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 20, 10**-1])
+    #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 20, 10**-1])
 
     OVERRIDE_EQUAL_MU = True
     LOG_PL = True
     NORMALIZE = False
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
-    bval = 1 * scale_f
+    bval = 1e15 * scale_f
     include_neighbors = False
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
@@ -417,15 +415,17 @@ if __name__ == "__main__":
         print(e_data)
         print("Output: {}".format(out_filename))
         try:
+            print("Detecting GPU...")
             has_GPU = cuda.detect()
-        except Exception:
+        except Exception as e:
+            print(e)
             has_GPU = False
 
         if has_GPU: 
             device = cuda.get_current_device()
             num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
             TPB = (2 ** 7,)
-            max_sims_per_block = 6           # Maximum of 6 due to shared memory limit
+            max_sims_per_block = 3           # Maximum of 6 due to shared memory limit
             from pvSimPCR import pvSim
         else:
             print("No GPU detected - reverting to CPU simulation")
