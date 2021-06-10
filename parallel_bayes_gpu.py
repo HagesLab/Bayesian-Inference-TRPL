@@ -321,10 +321,10 @@ if __name__ == "__main__":
     Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
-    #T   = 512000
-    T   = 3200000                                # Time points
+    #T   = 1000
+    T   = 80000                                # Time points
     #plT = 512
-    plT = 40                                  # Set PL interval (dt)
+    plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
     MAX = 1000                                  # Max iterations
@@ -347,7 +347,7 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,2,1,2,2,2,1,2,2,1])
+    ref1 = np.array([1,4,1,4,4,4,1,16,4,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,16,16,1,16,1,1])
     ref3 = np.array([1,1,1,1,1,1,1,2,1,1])
@@ -366,7 +366,7 @@ if __name__ == "__main__":
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
     bval = 1e15 * scale_f
-    include_neighbors = False
+    include_neighbors = True
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
 

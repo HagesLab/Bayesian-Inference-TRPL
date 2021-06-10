@@ -232,14 +232,14 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
         #    print('time: ', t)
         if t == 0:                                  # Select integration order
             a0 = 1.0; a1 = -1.0; a2 = 0.0; a3 = 0.0; a4 = 0.0; a5 = 0.0           # Euler step
-        else: #elif t == 1:
+        elif t == 1:
             a0 = 1.5; a1 = -2.0; a2 = 0.5; a3 = 0.0; a4 = 0.0; a5 = 0.0           # 2nd order implicit
-        #elif t == 2:
-        #    a0 = 11/6; a1 = -3.0; a2 = 1.5; a3 = -1/3; a4 = 0.0; a5 = 0.0
-        #elif t == 3:
-        #    a0 = 25/12; a1 = -4.0; a2 = 3.0; a3 = -4/3; a4 = 0.25; a5 = 0.0
-        #else:
-        #    a0 = 137/60; a1 = -5.0; a2 = 5.0; a3 = -10/3; a4 = 1.25; a5 = -0.2
+        elif t == 2:
+            a0 = 11/6; a1 = -3.0; a2 = 1.5; a3 = -1/3; a4 = 0.0; a5 = 0.0
+        elif t == 3:
+            a0 = 25/12; a1 = -4.0; a2 = 3.0; a3 = -4/3; a4 = 0.25; a5 = 0.0
+        else:
+            a0 = 137/60; a1 = -5.0; a2 = 5.0; a3 = -10/3; a4 = 1.25; a5 = -0.2
         kp  = (t+1)%6                               # new time
         k   = (t)  %6                               # current time
         ko  = (t-1)%6                               # old time
