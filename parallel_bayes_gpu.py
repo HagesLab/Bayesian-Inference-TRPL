@@ -70,8 +70,10 @@ def maxP(N,P,refs, minX, maxX):
     pN = np.prod(refs, axis=0)
     ind = indexGrid(N,refs)
     X = paramGrid(ind, refs, minX, maxX)
-    print(X[np.argmax(P)])
-    print("P = {}".format(P[np.argmax(P)]))
+    wheremax = np.unravel_index(np.argmax(P, axis=None), P.shape)
+    print(X[wheremax[0]])
+    print("Mag_offset: ", mag_grid[wheremax[1]])
+    print("P = {}".format(P[wheremax]))
 
 def cov_P(N,P,refs, minX, maxX):
     global param_names
@@ -108,6 +110,26 @@ def cov_P(N,P,refs, minX, maxX):
             print("Writing covariance file {} and {}".format(param_names[pID_1], param_names[pID_2]))
             np.save(wdir + out_filename +\
                     "_BAYRES_" + param_names[pID_1] + "-" + param_names[pID_2] + ".npy", cov_P)
+
+        if len(mag_grid) > 1:
+            pID_1 = iterables[q]
+            cov_P = np.zeros((pN[pID_1], len(mag_grid)))
+
+            for i in np.unique(ind[:,pID_1]):
+                cov_P[i] = np.sum(P[np.where(ind[:, pID_1] == i)], axis=0)
+
+            m = pID_1
+            im = np.array([*range(pN[m])]) + 0.5                 # Coords
+            X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+            X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
+            X = X1 * (1 - do_log[m]) + X2 * do_log[m]
+
+
+            cov_P = np.hstack((X.reshape((len(X), 1)), cov_P))
+            X = np.append(np.array([-1]), mag_grid, axis=0)
+            cov_P = np.vstack((X.reshape((1, len(X))), cov_P))
+            print("Writing covariance file {} and mag_offset".format(param_names[pID_1]))
+            np.save(wdir + out_filename + "_BAYRES_" + param_names[pID_1] + "-mag_offset.npy", cov_P)
     return
         
 def export_marginal_P(marP, pN, minX, maxX, param_names):
@@ -122,8 +144,14 @@ def export_marginal_P(marP, pN, minX, maxX, param_names):
 
         print(np.vstack((X, marP[m])).T)
         np.savetxt(wdir + out_filename + "_BAYRES_" + param_names[m] + ".csv", np.vstack((X, marP[m])).T, delimiter=",")
-
     return        
+
+def export_magsum(P):
+    if len(mag_grid) > 1:
+        sum_by_mag = np.sum(P, axis=0)
+        print(np.vstack((mag_grid, sum_by_mag)).T)
+        np.savetxt(wdir + out_filename + "_BAYRES_" + "mag_offset.csv", np.vstack((mag_grid, sum_by_mag)).T, delimiter=",")
+    return
 
 def find_neighbors(N, nref, refs):
     applied_refs = np.prod(refs[0:nref], axis=0) # not refs[0:nref+1], as #nref hasn't been applied yet
@@ -161,7 +189,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 
         N   = refineGrid(N, refs[nref])                      # Refine grid
         Np  = np.prod(refs[nref])                            # Params per set
-        P = np.zeros(len(N))                               # Likelihoods
+        P = np.zeros((len(N),  len(mag_grid)))                               # Likelihoods
         print("ref level, N: ", nref, len(N))
 
         X = np.empty((len(N), len(refs[0])))
@@ -191,7 +219,6 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             plN = np.empty((len(X), 2, sim_params[2]))
             plP = np.empty((len(X), 2, sim_params[2]))
             plE = np.empty((len(X), 2, sim_params[2]+1))
-        
             assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
             for blk in range(0,len(X),GPU_GROUP_SIZE):
             
@@ -204,69 +231,34 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
         
             #sys.exit()    
 
-            if LOG_PL:
-                plI[plI<bval] = bval
+            if LOG_PL:         
+                plI[plI<sys.float_info.min] = sys.float_info.min
                 plI = np.log10(plI)
             # TODO: Match experimental data timesteps to model timesteps
-            #print(X[16, 7])
-            #np.save(r"/home/cfai2304/super_bayes/{}{}.npy".format("5th", ic_num), plI)
-            #np.savetxt(r"/home/cfai2304/super_bayes/plI.csv", plI, delimiter=",")
-            print("Pre-normalize")
-            print(plI)
-            print(values)
+            print("values", values)
 
-            if NORMALIZE:
-                plI = plI.T
-                if LOG_PL:
-                    plI -= plI[0]
-                    values -= values[0]
-                else:
-                    plI /= plI[0]
-                    values /= values[0]
-                plI = plI.T
-
-                # Discard t=0 value, since all normalizations are wrt those
-                plI = plI[:,1:]
-                values = values[1:]
-
-            print("Post normalize")
-            print(plI[:, -3:])
-            print(list(values))
 
             # Calculate errors
-            plI -= values
-            print("After errors")
-            print(plI[:, -3:])
-            print("Sum of errors")
-            print(list(np.sum(plI, axis=1)))
+            for m, mag in enumerate(mag_grid):
+                err = plI + mag
+                cutoff = np.log10(bval_cutoff)
+                err[err < cutoff] = cutoff
+                err -= values
+                print("Offset ", mag)
+                print(err)
+                #sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI) ** 2, axis=0) # Total error per timestep/observation
+                sig_sq = 0.5
+                sig_sq *= 2
+                P[:, m] -= np.sum((err)**2 / sig_sq + np.log(np.pi*sig_sq)/2, axis=1)
+            print(P)
 
-            #sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI) ** 2, axis=0) # Total error per timestep/observation
-            sig_sq = 0.5
-            #print(sig_sq)
-            sig_sq *= 2
-            P -= np.sum((plI)**2 / sig_sq + np.log(np.pi*sig_sq)/2, axis=1)
-            print(list(P))
-        """
-        UNC_GROUP_SIZE = int(1e8 / len(N))     
-        for i in range(0, len(plI[0]), UNC_GROUP_SIZE):
-            sig = modelErr2(plI[:,i:i+UNC_GROUP_SIZE], refs[nref])
-            sg2 = 2*(np.amax(sig, axis=0)**2 + std[i:i+UNC_GROUP_SIZE]**2)
-            Pbk -= np.sum((plI[:,i:i+UNC_GROUP_SIZE]-values[i:i+UNC_GROUP_SIZE])**2 / sg2 + np.log(np.pi*sg2)/2, axis=1)
-            
-            for i in range(len(plI[0])):
-                F = plI[:,i]
-                sig  = modelErr(F, refs[nref])
-                sg2  = 2*(sig.max()**2 + std[i]**2)
-                Pbk -= (F-values[i])**2 / sg2 + np.log(np.pi*sg2)/2
-            
-        """    
         # Normalization scheme - to ensure that np.sum(P) is never zero due to mass underflow
         # First, shift lnP's up so max lnP is zero, ensuring at least one nonzero P
         # Then shift lnP a little further to maximize number of non-underflowing values
         # without causing overflow
         # Key is only to add or subtract from lnP - that way any introduced factors cancel out
         # during normalize by sum(P)
-        P = np.exp(P - np.max(P) + 1000*np.log(2) - np.log(len(P)))
+        P = np.exp(P - np.max(P) + 1000*np.log(2) - np.log(P.size))
         P  /= np.sum(P)                                      # Normalize P's
     return N, P
 
@@ -275,7 +267,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 import csv
 from numba import cuda
 import sys
-def get_data(exp_file, scale_f=1, sample_f=1):
+def get_data(exp_file, scale_f=1, sample_f=1, noisy=False):
     with open(exp_file, newline='') as file:
         ifstream = csv.reader(file)
         t = []
@@ -293,12 +285,17 @@ def get_data(exp_file, scale_f=1, sample_f=1):
             count += 1
 
     t = np.array(t)
-    print(t)
     PL = np.array(PL) * scale_f
     uncertainty = np.array(uncertainty) * scale_f
   
     if LOG_PL:
-        PL[PL < bval] = bval
+        if noisy:
+            # Assume const uncertainty, set minimum observable value to that
+            global bval_cutoff
+            PL[PL < bval_cutoff] = bval_cutoff
+        else:
+            # Set minimum observable to 1
+            PL[PL < scale_f] = scale_f
         uncertainty /= PL
         PL = np.log10(PL)
     return (t, PL, uncertainty)
@@ -350,22 +347,28 @@ if __name__ == "__main__":
     ref1 = np.array([1,4,1,4,4,4,1,16,4,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,16,16,1,16,1,1])
-    ref3 = np.array([1,1,1,1,1,1,1,2,1,1])
+    ref3 = np.array([1,1,1,1,1,1,1,32,1,1])
     ref5 = np.array([1,2,1,6,6,6,1,6,6,1])
-    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref3])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e13, 20, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
+    #minX = np.array([1e8, 1e13, 20, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
+    #maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 20, 10**-1])
     #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 20, 10**-1])
-
+    minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
+    maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1000, 871, 10**-1])
+    mag_scale = (0,3)
+    mag_points = 30
+    mag_grid = np.linspace(mag_scale[0], mag_scale[1], mag_points)
+    #mag_grid = [0]
     OVERRIDE_EQUAL_MU = True
     LOG_PL = True
     NORMALIZE = False
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
-    bval = 1e15 * scale_f
+    data_is_noisy = True
+    bval_cutoff = 87*1e15 * scale_f
     include_neighbors = True
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
@@ -407,9 +410,9 @@ if __name__ == "__main__":
         print("Refinement levels:")
         for i in range(num_params):
             print("{}: {}".format(param_names[i], refs[:,i]))        
-        e_data = get_data(experimental_data_filename, scale_f=scale_f, sample_f = sample_factor) 
+        e_data = get_data(experimental_data_filename, scale_f=scale_f, sample_f = sample_factor, noisy=data_is_noisy) 
         print("\nExperimental data - {}".format(experimental_data_filename))
-        print("Cutoff val: {}".format(bval))
+        print("Data considered noisy: {}".format(data_is_noisy))
         print("Sample factor: {}".format(sample_factor))
         print("Normalize data: {}".format(NORMALIZE))
         print(e_data)
@@ -451,12 +454,14 @@ if __name__ == "__main__":
         print("Writing to /blue:")
         marP = marginalP(N, P, refs)
         export_marginal_P(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
+        export_magsum(P)
         cov_P(N, P, refs, minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1))
     except:
         print("Write failed; rewriting to backup location /home:")
         wdir = r"/home/cfai2304/super_bayes/"
         marP = marginalP(N, P, refs)
         export_marginal_P(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
+        export_magsum(P)
         cov_P(N, P, refs, minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1))
 
     maxP(N, P, refs, minX *(unit_conversions ** -1) , maxX * (unit_conversions ** -1))
