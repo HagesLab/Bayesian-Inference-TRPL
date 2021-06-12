@@ -80,7 +80,6 @@ def cov_P(N,P,refs, minX, maxX):
     pN   = np.prod(refs, axis=0)
     ind  = indexGrid(N, refs)
     iterables = np.where(pN > 1)[0]
-    
     for q in range(len(iterables)):
         for r in range(q):
             pID_1 = iterables[q]
@@ -346,8 +345,8 @@ if __name__ == "__main__":
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
     ref1 = np.array([1,4,1,4,4,4,1,16,4,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
-    ref4 = np.array([1,1,1,1,16,16,1,16,1,1])
-    ref3 = np.array([1,1,1,1,1,1,1,32,1,1])
+    ref4 = np.array([1,16,1,1,1,1,1,16,1,1])
+    ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
     ref5 = np.array([1,2,1,6,6,6,1,6,6,1])
     refs = np.array([ref3])#, ref2, ref3])                         # Refinements
     
@@ -356,10 +355,10 @@ if __name__ == "__main__":
     #maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 20, 10**-1])
     #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 20, 10**-1])
-    minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
-    maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1000, 871, 10**-1])
-    mag_scale = (0,3)
-    mag_points = 30
+    minX = np.array([1e8, 3e15, 20, 1, 1e-11, 10, 10, 1, 1, 10**-1])
+    maxX = np.array([1e8, 3e15, 20, 100, 1e-9, 10, 10, 1000, 1000, 10**-1])
+    mag_scale = (-2,2)
+    mag_points = 31
     mag_grid = np.linspace(mag_scale[0], mag_scale[1], mag_points)
     #mag_grid = [0]
     OVERRIDE_EQUAL_MU = True
@@ -367,8 +366,8 @@ if __name__ == "__main__":
     NORMALIZE = False
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
-    data_is_noisy = True
-    bval_cutoff = 87*1e15 * scale_f
+    data_is_noisy = False
+    bval_cutoff = 1 * scale_f
     include_neighbors = True
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
@@ -396,6 +395,8 @@ if __name__ == "__main__":
         for i in range(len(refs[0])):
             if not refs[0,i] == 1:
                 assert not (minX[i] == maxX[i]), "{} is subdivided but min val == max val".format(param_names[i])
+            else:
+                assert (minX[i] == maxX[i]), "{} is not subdivided but min val != max val".format(param_names[i])
         # TODO: Additional checks involving refs
             
         print("Starting simulations with the following parameters:")
