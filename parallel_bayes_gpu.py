@@ -152,39 +152,13 @@ def export_magsum(P):
         np.savetxt(wdir + out_filename + "_BAYRES_" + "mag_offset.csv", np.vstack((mag_grid, sum_by_mag)).T, delimiter=",")
     return
 
-def find_neighbors(N, nref, refs):
-    applied_refs = np.prod(refs[0:nref], axis=0) # not refs[0:nref+1], as #nref hasn't been applied yet
-    search_range = 1 # The maximum distance neighbors of parameter i can be
-    new_N = set(N) # set() can absorb duplicates at minimal cost
-    
-    for i in applied_refs:
-        if i > 1:
-            og_range = search_range # How far away neighbors of parameter i are expected to be
-            search_range *= i # Size of neighborhood where parameter i+1 is constant.
-            for n in N:
-                # Exceeding this means parameter i was a boundary value i.e. has only one neighbor
-                min_N = n - n % search_range
-                max_N = min_N + search_range - 1
-                
-                new_n = n - og_range
-                if new_n >= min_N: new_N.add(new_n)
-                
-                new_n = n + og_range
-                if new_n <= max_N: new_N.add(new_n)
-                
-    new_N = list(new_N)
-    return np.array(new_N, dtype=np.int32)
-
 def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):        # Driver function
     global num_SMs
     global has_GPU
-    global include_neighbors, init_mode
+    global init_mode
     global GPU_GROUP_SIZE
     for nref in range(len(refs)):                            # Loop refinements
         N   = N[np.where(P > minP[nref])]                    # P < minP
-
-        if nref > 0 and include_neighbors:
-            N = find_neighbors(N, nref, refs)
 
         N   = refineGrid(N, refs[nref])                      # Refine grid
         Np  = np.prod(refs[nref])                            # Params per set
@@ -214,26 +188,45 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 
             # for t in range(t_batches):
             #     plI = np.empty((len(X), len(init_params) * 
-            plI = np.empty((len(X), timepoints_per_ic), dtype=np.float32)
-            plN = np.empty((len(X), 2, sim_params[2]))
-            plP = np.empty((len(X), 2, sim_params[2]))
-            plE = np.empty((len(X), 2, sim_params[2]+1))
-            assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
-            for blk in range(0,len(X),GPU_GROUP_SIZE):
+            if not LOADIN_PL:
+                plI = np.empty((len(X), timepoints_per_ic), dtype=np.float32)
+                plN = np.empty((len(X), 2, sim_params[2]))
+                plP = np.empty((len(X), 2, sim_params[2]))
+                plE = np.empty((len(X), 2, sim_params[2]+1))
+                assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
+                for blk in range(0,len(X),GPU_GROUP_SIZE):
             
-                if has_GPU:
-                    model(plI[blk:blk+GPU_GROUP_SIZE], plN[blk:blk+GPU_GROUP_SIZE], plP[blk:blk+GPU_GROUP_SIZE], 
-                          plE[blk:blk+GPU_GROUP_SIZE], X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num], 
-                          TPB, num_SMs, max_sims_per_block, init_mode=init_mode)
-                else:
-                    plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num])[1][-1]
+                    if has_GPU:
+                        model(plI[blk:blk+GPU_GROUP_SIZE], plN[blk:blk+GPU_GROUP_SIZE], plP[blk:blk+GPU_GROUP_SIZE], 
+                              plE[blk:blk+GPU_GROUP_SIZE], X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num], 
+                              TPB, num_SMs, max_sims_per_block, init_mode=init_mode)
+                    else:
+                        plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num])[1][-1]
         
             #sys.exit()    
 
-            if LOG_PL:         
-                plI[plI<sys.float_info.min] = sys.float_info.min
-                plI = np.log10(plI)
-            # TODO: Match experimental data timesteps to model timesteps
+                if LOG_PL:         
+                    plI[plI<sys.float_info.min] = sys.float_info.min
+                    plI = np.log10(plI)
+                # TODO: Match experimental data timesteps to model timesteps
+                try:
+                    np.save(wdir + out_filename + "plI" + str(ic_num) + ".npy", plI)
+                except Exception as e:
+                    print("Warning: save failed\n", e)
+
+            else:
+                print("Loading plI" + str(ic_num))
+                try:
+                    plI = np.load(wdir + out_filename + "plI" + str(ic_num) + ".npy")
+                except Exception as e:
+                    print("Error: load failed\n", e)
+                    sys.exit()
+            try:
+                T_FACTOR = float(sys.argv[5]) 
+            except Exception:
+                T_FACTOR = len(values)
+
+            print("Temperature factor: ", str(T_FACTOR), "T=", str(len(values) / T_FACTOR))
             print("values", values)
 
 
@@ -243,13 +236,9 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
                 cutoff = np.log10(bval_cutoff)
                 err[err < cutoff] = cutoff
                 err -= values
-                print("Offset ", mag)
-                print(err)
                 #sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI) ** 2, axis=0) # Total error per timestep/observation
-                sig_sq = 0.5
-                sig_sq *= 2
+                sig_sq = len(values) / T_FACTOR
                 P[:, m] -= np.sum((err)**2 / sig_sq + np.log(np.pi*sig_sq)/2, axis=1)
-            print(P)
 
         # Normalization scheme - to ensure that np.sum(P) is never zero due to mass underflow
         # First, shift lnP's up so max lnP is zero, ensuring at least one nonzero P
@@ -317,9 +306,8 @@ if __name__ == "__main__":
     Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
-    #T   = 1000
+    #T   = 2000
     T   = 80000                                # Time points
-    #plT = 512
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
@@ -343,32 +331,32 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,4,1,4,4,4,1,16,4,1])
+    ref1 = np.array([1,6,1,6,6,6,1,6,6,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
-    ref4 = np.array([1,16,1,1,1,1,1,16,1,1])
+    ref4 = np.array([1,1,1,1,1,1,1,32,1,1])
     ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
     ref5 = np.array([1,2,1,6,6,6,1,6,6,1])
-    refs = np.array([ref3])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
 
-    #minX = np.array([1e8, 1e13, 20, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
-    #maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
-    #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 20, 10**-1])
-    #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 20, 10**-1])
-    minX = np.array([1e8, 3e15, 20, 1, 1e-11, 10, 10, 1, 1, 10**-1])
-    maxX = np.array([1e8, 3e15, 20, 100, 1e-9, 10, 10, 1000, 1000, 10**-1])
+    minX = np.array([1e8, 1e13, 20, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
+    #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
+    #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
+    #minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
+    #maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1000, 871, 10**-1])
     mag_scale = (-2,2)
     mag_points = 31
     mag_grid = np.linspace(mag_scale[0], mag_scale[1], mag_points)
     #mag_grid = [0]
+
+    LOADIN_PL = sys.argv[4] != "new"
     OVERRIDE_EQUAL_MU = True
     LOG_PL = True
-    NORMALIZE = False
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
     data_is_noisy = False
     bval_cutoff = 1 * scale_f
-    include_neighbors = True
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
 
@@ -415,7 +403,6 @@ if __name__ == "__main__":
         print("\nExperimental data - {}".format(experimental_data_filename))
         print("Data considered noisy: {}".format(data_is_noisy))
         print("Sample factor: {}".format(sample_factor))
-        print("Normalize data: {}".format(NORMALIZE))
         print(e_data)
         print("Output: {}".format(out_filename))
         try:
