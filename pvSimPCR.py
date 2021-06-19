@@ -251,7 +251,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
         #for blk in range(1):
             #if t==0 and cuda.grid(1) == 0:
             #    print('block', blk, 'Starting p: ', blk*BPG)
-            if cuda.threadIdx.x == 0: race[p] += 1
+            #if cuda.threadIdx.x == 0: race[p] += 1
 
             # Assign #MSPB or #remaining sims to block
             p_lim = min(p+MSPB, len(matPar)) 
@@ -299,8 +299,8 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
           
 
 def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init_mode="exp"):
-    print("Solver called")
-    print((TPB, BPG))
+    #print("Solver called")
+    #print((TPB, BPG))
     # Unpack local parameters
     Length, Time, L, T, plT, pT, tol, MAX = simPar
     dx = Length/L
@@ -363,8 +363,8 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     devm = cuda.to_device(matPar)
     devs = cuda.to_device(simPar)
     devg = cuda.to_device(gridPar)
-    print("Loading data took {} sec".format(time.time() - clock0))
-    race = np.zeros(len(matPar) + 1)
+    #print("Loading data took {} sec".format(time.time() - clock0))
+    race = np.zeros(1)
     drace = cuda.to_device(race)
     clock0 = time.time()
     tEvol[BPG,TPB](devN, devP, devE, devpN, devpP, devpE, devpI, devm, devs, devg, drace)
@@ -375,17 +375,17 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     plN_main[:] = devpN.copy_to_host()
     plP_main[:] = devpP.copy_to_host()
     plE_main[:] = devpE.copy_to_host()
-    print("Copy back took {} sec".format(time.time() - clock0))
-    race = drace.copy_to_host()
-    print(race)
+    #print("Copy back took {} sec".format(time.time() - clock0))
+    #race = drace.copy_to_host()
+    #print(race)
 
     # Re-dimensionalize
     plI_main /= dx**2*dt
     plN_main /= dx**3
     plP_main /= dx**3
     plE_main /= dx
-    print(plI_main[:,0:6])
-    print(list(np.sum(plI_main, axis=1)))
+    #print(plI_main[:,0:6])
+    #print(list(np.sum(plI_main, axis=1)))
     #print("plN", plN_main)
     #print("plP", plP_main)
     return

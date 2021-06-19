@@ -185,42 +185,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             times = data[0][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
             values = data[1][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
             std = data[2][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
-
-            # for t in range(t_batches):
-            #     plI = np.empty((len(X), len(init_params) * 
-            if not LOADIN_PL:
-                plI = np.empty((len(X), timepoints_per_ic), dtype=np.float32)
-                plN = np.empty((len(X), 2, sim_params[2]))
-                plP = np.empty((len(X), 2, sim_params[2]))
-                plE = np.empty((len(X), 2, sim_params[2]+1))
-                assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
-                for blk in range(0,len(X),GPU_GROUP_SIZE):
-            
-                    if has_GPU:
-                        model(plI[blk:blk+GPU_GROUP_SIZE], plN[blk:blk+GPU_GROUP_SIZE], plP[blk:blk+GPU_GROUP_SIZE], 
-                              plE[blk:blk+GPU_GROUP_SIZE], X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num], 
-                              TPB, num_SMs, max_sims_per_block, init_mode=init_mode)
-                    else:
-                        plI[blk:blk+GPU_GROUP_SIZE] = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num])[1][-1]
-        
-            #sys.exit()    
-
-                if LOG_PL:         
-                    plI[plI<sys.float_info.min] = sys.float_info.min
-                    plI = np.log10(plI)
-                # TODO: Match experimental data timesteps to model timesteps
-                try:
-                    np.save(wdir + out_filename + "plI" + str(ic_num) + ".npy", plI)
-                except Exception as e:
-                    print("Warning: save failed\n", e)
-
-            else:
-                print("Loading plI" + str(ic_num))
-                try:
-                    plI = np.load(wdir + out_filename + "plI" + str(ic_num) + ".npy")
-                except Exception as e:
-                    print("Error: load failed\n", e)
-                    sys.exit()
+            assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
             try:
                 T_FACTOR = float(sys.argv[5]) 
             except Exception:
@@ -229,17 +194,50 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             print("Temperature factor: ", str(T_FACTOR), "T=", str(len(values) / T_FACTOR))
             print("values", values)
 
+            for blk in range(0,len(X),GPU_GROUP_SIZE):
+                if not LOADIN_PL:
+                    plI = np.empty((GPU_GROUP_SIZE, timepoints_per_ic), dtype=np.float32)
+                    plN = np.empty((GPU_GROUP_SIZE, 2, sim_params[2]))
+                    plP = np.empty((GPU_GROUP_SIZE, 2, sim_params[2]))
+                    plE = np.empty((GPU_GROUP_SIZE, 2, sim_params[2]+1))
 
-            # Calculate errors
-            for m, mag in enumerate(mag_grid):
-                err = plI + mag
-                cutoff = np.log10(bval_cutoff)
-                err[err < cutoff] = cutoff
-                err -= values
-                #sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI) ** 2, axis=0) # Total error per timestep/observation
-                sig_sq = len(values) / T_FACTOR
-                P[:, m] -= np.sum((err)**2 / sig_sq + np.log(np.pi*sig_sq)/2, axis=1)
+                    if has_GPU:
+                        model(plI, plN, plP, 
+                              plE, X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num], 
+                              TPB, num_SMs, max_sims_per_block, init_mode=init_mode)
+                    else:
+                        plI = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num])[1][-1]
+        
 
+                    if LOG_PL:         
+                        plI[plI<sys.float_info.min] = sys.float_info.min
+                        plI = np.log10(plI)
+
+                    try:
+                        np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename, ic_num, blk), plI)
+                        print("Saved plI of size ", plI.shape)
+                    except Exception as e:
+                        print("Warning: save failed\n", e)
+
+                else:
+                    print("Loading plI{} group {}".format(ic_num,blk))
+                    try:
+                        plI = np.load("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk))
+                        print("Loaded plI of size ", plI.shape)
+                    except Exception as e:
+                        print("Error: load failed\n", e)
+                        sys.exit()
+
+
+                # Calculate errors
+                v_dev = cuda.to_device(values)
+                m_dev = cuda.to_device(mag_grid)
+
+                plI_dev = cuda.to_device(plI)
+                P_dev = cuda.to_device(P[blk:blk+GPU_GROUP_SIZE])
+                kernel_lnP[num_SMs, TPB](P_dev, plI_dev, v_dev, m_dev, bval_cutoff, T_FACTOR)
+                cuda.synchronize()
+                P[blk:blk+GPU_GROUP_SIZE] = P_dev.copy_to_host()
         # Normalization scheme - to ensure that np.sum(P) is never zero due to mass underflow
         # First, shift lnP's up so max lnP is zero, ensuring at least one nonzero P
         # Then shift lnP a little further to maximize number of non-underflowing values
@@ -330,8 +328,8 @@ if __name__ == "__main__":
     unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0])
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
-    GPU_GROUP_SIZE = 16 ** 3                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,6,1,6,6,6,1,6,6,1])
+    GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
+    ref1 = np.array([1,12,1,4,12,12,1,12,12,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,1,1,1,32,1,1])
     ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
@@ -418,6 +416,7 @@ if __name__ == "__main__":
             TPB = (2 ** 7,)
             max_sims_per_block = 3           # Maximum of 6 due to shared memory limit
             from pvSimPCR import pvSim
+            from probs import lnP, kernel_lnP
         else:
             print("No GPU detected - reverting to CPU simulation")
             num_SMs = -1
