@@ -152,7 +152,7 @@ def export_magsum(P):
         np.savetxt(wdir + out_filename + "_BAYRES_" + "mag_offset.csv", np.vstack((mag_grid, sum_by_mag)).T, delimiter=",")
     return
 
-def make_grid(N, P, nref, refs, minX, maxX, minP):
+def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
     N   = N[np.where(P > minP[nref])]                    # P < minP
     N   = refineGrid(N, refs[nref])                      # Refine grid
     Np  = np.prod(refs[nref])                            # Params per set
@@ -170,50 +170,57 @@ def make_grid(N, P, nref, refs, minX, maxX, minP):
         X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
     return N, P, X
 
-def simulate(model, P, ic_num, blk, values, X, timepoints_per_ic, sim_params, init_params, T_FACTOR):
-    size = min(GPU_GROUP_SIZE, len(X) - blk)
-    if not LOADIN_PL:
-        plI = np.empty((size, timepoints_per_ic), dtype=np.float32)
-        plN = np.empty((size, 2, sim_params[2]))
-        plP = np.empty((size, 2, sim_params[2]))
-        plE = np.empty((size, 2, sim_params[2]+1))
+def simulate(model, P, ic_num, values, X, timepoints_per_ic, 
+             sim_params, init_params, T_FACTOR, gpu_id, num_gpus):
+    cuda.select_device(gpu_id)
+    device = cuda.get_current_device()
+    num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
+    
+    for blk in range(gpu_id*GPU_GROUP_SIZE,len(X),num_gpus*GPU_GROUP_SIZE):
+        size = min(GPU_GROUP_SIZE, len(X) - blk)
 
-        if has_GPU:
-            model(plI, plN, plP, 
-                  plE, X[blk:blk+size], sim_params, init_params[ic_num], 
-                  TPB, num_SMs, max_sims_per_block, init_mode=init_mode)
-        else:
-            plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
+        if not LOADIN_PL:
+            plI = np.empty((size, timepoints_per_ic), dtype=np.float32)
+            plN = np.empty((size, 2, sim_params[2]))
+            plP = np.empty((size, 2, sim_params[2]))
+            plE = np.empty((size, 2, sim_params[2]+1))
+
+            if has_GPU:
+                model(plI, plN, plP, 
+                      plE, X[blk:blk+size], sim_params, init_params[ic_num], 
+                      TPB, num_SMs, max_sims_per_block, init_mode=init_mode)
+            else:
+                plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
         
 
-        if LOG_PL:         
-            plI[plI<10*sys.float_info.min] = 10*sys.float_info.min
-            plI = np.log10(plI)
+            if LOG_PL:         
+                plI[plI<10*sys.float_info.min] = 10*sys.float_info.min
+                plI = np.log10(plI)
 
-        try:
-            np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename, ic_num, blk), plI)
-            print("Saved plI of size ", plI.shape)
-        except Exception as e:
-            print("Warning: save failed\n", e)
+            try:
+                np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename, ic_num, blk), plI)
+                print("Saved plI of size ", plI.shape)
+            except Exception as e:
+                print("Warning: save failed\n", e)
 
-    else:
-        print("Loading plI{} group {}".format(ic_num,blk))
-        try:
-            plI = np.load("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk))
-            print("Loaded plI of size ", plI.shape)
-        except Exception as e:
-            print("Error: load failed\n", e)
-            sys.exit()
+        else:
+            print("Loading plI{} group {}".format(ic_num,blk))
+            try:
+                plI = np.load("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk))
+                print("Loaded plI of size ", plI.shape)
+            except Exception as e:
+                print("Error: load failed\n", e)
+                sys.exit()
 
 
-    # Calculate errors
-    v_dev = cuda.to_device(values)
-    m_dev = cuda.to_device(mag_grid)
-    plI_dev = cuda.to_device(plI)
-    P_dev = cuda.to_device(P[blk:blk+size])
-    kernel_lnP[num_SMs, TPB](P_dev, plI_dev, v_dev, m_dev, bval_cutoff, T_FACTOR)
-    cuda.synchronize()
-    P[blk:blk+size] = P_dev.copy_to_host()
+        # Calculate errors
+        v_dev = cuda.to_device(values)
+        m_dev = cuda.to_device(mag_grid)
+        plI_dev = cuda.to_device(plI)
+        P_dev = cuda.to_device(np.zeros_like(P[blk:blk+size]))
+        kernel_lnP[num_SMs, TPB](P_dev, plI_dev, v_dev, m_dev, bval_cutoff, T_FACTOR)
+        cuda.synchronize()
+        P[blk:blk+size] += P_dev.copy_to_host()
     return
 
 def normalize(P):
@@ -233,15 +240,17 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     global init_mode
     global GPU_GROUP_SIZE
     for nref in range(len(refs)):                            # Loop refinements
-        N, P, X = make_grid(N, P, nref, refs, minX, maxX, minP)
-
+        num_curves = len(init_params)
         timepoints_per_ic = sim_params[3] // sim_params[4] + 1
         assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
+
+        N, P, X = make_grid(N, P, nref, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
+
         ## OVERRIDE: MAKE SRH TAUS EQUAL
         #X[:,8] = X[:,7]
         if OVERRIDE_EQUAL_MU:
             X[:,2] = X[:,3]
-        for ic_num in range(len(init_params)):
+        for ic_num in range(num_curves):
             times = data[0][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
             values = data[1][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
             std = data[2][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
@@ -254,8 +263,19 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             print("Temperature factor: ", str(T_FACTOR), "T=", str(len(values) / T_FACTOR))
             print("values", values)
 
-            for blk in range(0,len(X),GPU_GROUP_SIZE):
-                simulate(model, P, ic_num, blk, values, X, timepoints_per_ic, sim_params, init_params, T_FACTOR)
+            num_gpus = 4
+            threads = []
+            for gpu_id in range(num_gpus):
+                print("Starting thread {}".format(gpu_id))
+                thread = threading.Thread(target=simulate, args=(model, P, ic_num, values, X, 
+                                          timepoints_per_ic, sim_params, init_params, T_FACTOR, gpu_id, num_gpus))
+                threads.append(thread)
+                thread.start()
+
+            for gpu_id, thread in enumerate(threads):
+                print("Ending thread {}".format(gpu_id))
+                thread.join()
+                print("Thread {} closed".format(gpu_id))
 
         P = normalize(P)
     return N, P
@@ -264,6 +284,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 #-----------------------------------------------------------------------------#
 import csv
 from numba import cuda
+import threading
 import sys
 def get_data(exp_file, scale_f=1, sample_f=1, noisy=False):
     with open(exp_file, newline='') as file:
@@ -340,21 +361,21 @@ if __name__ == "__main__":
     unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0])
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
-    GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,12,1,4,12,12,1,12,12,1])
+    GPU_GROUP_SIZE = 2 ** 12                  # Number of simulations assigned to GPU at a time - GPU has limited memory
+    ref1 = np.array([1,6,1,4,6,6,1,6,6,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,1,1,1,32,1,1])
     ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
     ref5 = np.array([1,2,1,6,6,6,1,6,6,1])
-    refs = np.array([ref4])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
 
-    #minX = np.array([1e8, 1e13, 20, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
-    #maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
+    minX = np.array([1e8, 1e13, 20, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
     #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
-    minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
-    maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1000, 871, 10**-1])
+    #minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
+    #maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1000, 871, 10**-1])
     mag_scale = (-2,2)
     mag_points = 31
     mag_grid = np.linspace(mag_scale[0], mag_scale[1], mag_points)
