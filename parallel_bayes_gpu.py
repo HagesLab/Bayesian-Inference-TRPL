@@ -152,28 +152,88 @@ def export_magsum(P):
         np.savetxt(wdir + out_filename + "_BAYRES_" + "mag_offset.csv", np.vstack((mag_grid, sum_by_mag)).T, delimiter=",")
     return
 
+def make_grid(N, P, nref, refs, minX, maxX, minP):
+    N   = N[np.where(P > minP[nref])]                    # P < minP
+    N   = refineGrid(N, refs[nref])                      # Refine grid
+    Np  = np.prod(refs[nref])                            # Params per set
+    P = np.zeros((len(N),  len(mag_grid)))                               # Likelihoods
+    print("ref level, N: ", nref, len(N))
+
+    X = np.empty((len(N), len(refs[0])))
+        
+    # TODO: Determine block size from GPU info instead of refinement?
+    # Np cannot be modified! indexGrid assumes a certain value of Np
+    for n in range(0, len(N), Np):                       # Loop over blks
+        Nn  = N[n:n+Np]                                  # Cells block
+        ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
+        #X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
+        X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
+    return N, P, X
+
+def simulate(model, P, ic_num, blk, values, X, timepoints_per_ic, sim_params, init_params, T_FACTOR):
+    size = min(GPU_GROUP_SIZE, len(X) - blk)
+    if not LOADIN_PL:
+        plI = np.empty((size, timepoints_per_ic), dtype=np.float32)
+        plN = np.empty((size, 2, sim_params[2]))
+        plP = np.empty((size, 2, sim_params[2]))
+        plE = np.empty((size, 2, sim_params[2]+1))
+
+        if has_GPU:
+            model(plI, plN, plP, 
+                  plE, X[blk:blk+size], sim_params, init_params[ic_num], 
+                  TPB, num_SMs, max_sims_per_block, init_mode=init_mode)
+        else:
+            plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
+        
+
+        if LOG_PL:         
+            plI[plI<10*sys.float_info.min] = 10*sys.float_info.min
+            plI = np.log10(plI)
+
+        try:
+            np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename, ic_num, blk), plI)
+            print("Saved plI of size ", plI.shape)
+        except Exception as e:
+            print("Warning: save failed\n", e)
+
+    else:
+        print("Loading plI{} group {}".format(ic_num,blk))
+        try:
+            plI = np.load("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk))
+            print("Loaded plI of size ", plI.shape)
+        except Exception as e:
+            print("Error: load failed\n", e)
+            sys.exit()
+
+
+    # Calculate errors
+    v_dev = cuda.to_device(values)
+    m_dev = cuda.to_device(mag_grid)
+    plI_dev = cuda.to_device(plI)
+    P_dev = cuda.to_device(P[blk:blk+size])
+    kernel_lnP[num_SMs, TPB](P_dev, plI_dev, v_dev, m_dev, bval_cutoff, T_FACTOR)
+    cuda.synchronize()
+    P[blk:blk+size] = P_dev.copy_to_host()
+    return
+
+def normalize(P):
+    # Normalization scheme - to ensure that np.sum(P) is never zero due to mass underflow
+    # First, shift lnP's up so max lnP is zero, ensuring at least one nonzero P
+    # Then shift lnP a little further to maximize number of non-underflowing values
+    # without causing overflow
+    # Key is only to add or subtract from lnP - that way any introduced factors cancel out
+    # during normalize by sum(P)
+    P = np.exp(P - np.max(P) + 1000*np.log(2) - np.log(P.size))
+    P  /= np.sum(P)                                      # Normalize P's
+    return P
+
 def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):        # Driver function
     global num_SMs
     global has_GPU
     global init_mode
     global GPU_GROUP_SIZE
     for nref in range(len(refs)):                            # Loop refinements
-        N   = N[np.where(P > minP[nref])]                    # P < minP
-
-        N   = refineGrid(N, refs[nref])                      # Refine grid
-        Np  = np.prod(refs[nref])                            # Params per set
-        P = np.zeros((len(N),  len(mag_grid)))                               # Likelihoods
-        print("ref level, N: ", nref, len(N))
-
-        X = np.empty((len(N), len(refs[0])))
-        
-        # TODO: Determine block size from GPU info instead of refinement?
-        # Np cannot be modified! indexGrid assumes a certain value of Np
-        for n in range(0, len(N), Np):                       # Loop over blks
-            Nn  = N[n:n+Np]                                  # Cells block
-            ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
-            #X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
-            X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
+        N, P, X = make_grid(N, P, nref, refs, minX, maxX, minP)
 
         timepoints_per_ic = sim_params[3] // sim_params[4] + 1
         assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
@@ -195,57 +255,9 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             print("values", values)
 
             for blk in range(0,len(X),GPU_GROUP_SIZE):
-                if not LOADIN_PL:
-                    plI = np.empty((GPU_GROUP_SIZE, timepoints_per_ic), dtype=np.float32)
-                    plN = np.empty((GPU_GROUP_SIZE, 2, sim_params[2]))
-                    plP = np.empty((GPU_GROUP_SIZE, 2, sim_params[2]))
-                    plE = np.empty((GPU_GROUP_SIZE, 2, sim_params[2]+1))
+                simulate(model, P, ic_num, blk, values, X, timepoints_per_ic, sim_params, init_params, T_FACTOR)
 
-                    if has_GPU:
-                        model(plI, plN, plP, 
-                              plE, X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num], 
-                              TPB, num_SMs, max_sims_per_block, init_mode=init_mode)
-                    else:
-                        plI = model(X[blk:blk+GPU_GROUP_SIZE], sim_params, init_params[ic_num])[1][-1]
-        
-
-                    if LOG_PL:         
-                        plI[plI<sys.float_info.min] = sys.float_info.min
-                        plI = np.log10(plI)
-
-                    try:
-                        np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename, ic_num, blk), plI)
-                        print("Saved plI of size ", plI.shape)
-                    except Exception as e:
-                        print("Warning: save failed\n", e)
-
-                else:
-                    print("Loading plI{} group {}".format(ic_num,blk))
-                    try:
-                        plI = np.load("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk))
-                        print("Loaded plI of size ", plI.shape)
-                    except Exception as e:
-                        print("Error: load failed\n", e)
-                        sys.exit()
-
-
-                # Calculate errors
-                v_dev = cuda.to_device(values)
-                m_dev = cuda.to_device(mag_grid)
-
-                plI_dev = cuda.to_device(plI)
-                P_dev = cuda.to_device(P[blk:blk+GPU_GROUP_SIZE])
-                kernel_lnP[num_SMs, TPB](P_dev, plI_dev, v_dev, m_dev, bval_cutoff, T_FACTOR)
-                cuda.synchronize()
-                P[blk:blk+GPU_GROUP_SIZE] = P_dev.copy_to_host()
-        # Normalization scheme - to ensure that np.sum(P) is never zero due to mass underflow
-        # First, shift lnP's up so max lnP is zero, ensuring at least one nonzero P
-        # Then shift lnP a little further to maximize number of non-underflowing values
-        # without causing overflow
-        # Key is only to add or subtract from lnP - that way any introduced factors cancel out
-        # during normalize by sum(P)
-        P = np.exp(P - np.max(P) + 1000*np.log(2) - np.log(P.size))
-        P  /= np.sum(P)                                      # Normalize P's
+        P = normalize(P)
     return N, P
 
 
@@ -334,15 +346,15 @@ if __name__ == "__main__":
     ref4 = np.array([1,1,1,1,1,1,1,32,1,1])
     ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
     ref5 = np.array([1,2,1,6,6,6,1,6,6,1])
-    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref4])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e13, 20, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
+    #minX = np.array([1e8, 1e13, 20, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
+    #maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
     #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
-    #minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
-    #maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1000, 871, 10**-1])
+    minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
+    maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1000, 871, 10**-1])
     mag_scale = (-2,2)
     mag_points = 31
     mag_grid = np.linspace(mag_scale[0], mag_scale[1], mag_points)
