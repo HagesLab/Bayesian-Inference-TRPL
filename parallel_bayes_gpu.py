@@ -198,15 +198,15 @@ def simulate(model, P, ic_num, values, X, timepoints_per_ic,
                 plI = np.log10(plI)
 
             try:
-                np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename, ic_num, blk), plI)
+                np.save("{}{}plI_grp{}.npy".format(wdir,out_filename, blk), plI)
                 print("Saved plI of size ", plI.shape)
             except Exception as e:
                 print("Warning: save failed\n", e)
 
         else:
-            print("Loading plI{} group {}".format(ic_num,blk))
+            print("Loading plI group {}".format(blk))
             try:
-                plI = np.load("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk))
+                plI = np.load("{}{}plI_grp{}.npy".format(wdir,out_filename, blk))
                 print("Loaded plI of size ", plI.shape)
             except Exception as e:
                 print("Error: load failed\n", e)
@@ -333,12 +333,12 @@ if __name__ == "__main__":
     # simPar
     #Time    = 250                                 # Final time (ns)
     #Length = 2000
-    Time    = 2000
+    Time    = 131867*0.025
     Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
     #T   = 2000
-    T   = 80000                                # Time points
+    T   = 131867                                # Time points
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
@@ -361,12 +361,12 @@ if __name__ == "__main__":
     unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0])
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
-    GPU_GROUP_SIZE = 2 ** 12                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,6,1,4,6,6,1,6,6,1])
+    GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
+    ref1 = np.array([1,10,1,10,10,10,1,10,10,1])
     ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,1,1,1,32,1,1])
     ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
-    ref5 = np.array([1,2,1,6,6,6,1,6,6,1])
+    ref5 = np.array([1,12,1,12,12,12,1,12,12,1])
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
 
@@ -386,8 +386,8 @@ if __name__ == "__main__":
     LOG_PL = True
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
-    data_is_noisy = False
-    bval_cutoff = 1 * scale_f
+    data_is_noisy = True
+    bval_cutoff = 1e15 * scale_f
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
 
