@@ -172,10 +172,14 @@ def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
 
 def simulate(model, P, ic_num, values, X, timepoints_per_ic, 
              sim_params, init_params, T_FACTOR, gpu_id, num_gpus):
-    cuda.select_device(gpu_id)
+    try:
+        cuda.select_device(gpu_id)
+    except IndexError:
+        print("Error: threads failed to launch")
+        sys.exit()
     device = cuda.get_current_device()
     num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
-    
+
     for blk in range(gpu_id*GPU_GROUP_SIZE,len(X),num_gpus*GPU_GROUP_SIZE):
         size = min(GPU_GROUP_SIZE, len(X) - blk)
 
@@ -188,7 +192,7 @@ def simulate(model, P, ic_num, values, X, timepoints_per_ic,
             if has_GPU:
                 model(plI, plN, plP, 
                       plE, X[blk:blk+size], sim_params, init_params[ic_num], 
-                      TPB, num_SMs, max_sims_per_block, init_mode=init_mode)
+                      TPB,8*num_SMs, max_sims_per_block, init_mode=init_mode)
             else:
                 plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
         
@@ -198,7 +202,7 @@ def simulate(model, P, ic_num, values, X, timepoints_per_ic,
                 plI = np.log10(plI)
 
             try:
-                np.save("{}{}plI_grp{}.npy".format(wdir,out_filename, blk), plI)
+                #np.save("{}{}plI_grp{}.npy".format(wdir,out_filename, blk), plI)
                 print("Saved plI of size ", plI.shape)
             except Exception as e:
                 print("Warning: save failed\n", e)
@@ -242,6 +246,8 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     for nref in range(len(refs)):                            # Loop refinements
         num_curves = len(init_params)
         timepoints_per_ic = sim_params[3] // sim_params[4] + 1
+        print(timepoints_per_ic)
+        print(len(data[0]))
         assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
 
         N, P, X = make_grid(N, P, nref, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
@@ -263,7 +269,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             print("Temperature factor: ", str(T_FACTOR), "T=", str(len(values) / T_FACTOR))
             print("values", values)
 
-            num_gpus = 4
+            num_gpus = 8
             threads = []
             for gpu_id in range(num_gpus):
                 print("Starting thread {}".format(gpu_id))
@@ -333,12 +339,14 @@ if __name__ == "__main__":
     # simPar
     #Time    = 250                                 # Final time (ns)
     #Length = 2000
-    Time    = 131867*0.025
+    #Time    = 131867*0.025
+    Time = 2000
     Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
-    #T   = 2000
-    T   = 131867                                # Time points
+    #T   = 4000
+    #T   = 131867                                # Time points
+    T = 80000
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
@@ -362,16 +370,17 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,10,1,10,10,10,1,10,10,1])
-    ref2 = np.array([1,1,1,1,16,16,1,16,16,1])
+    ref1 = np.array([1,10,1,1,10,10,1,10,10,1])
+    ref2 = np.array([1,16,1,1,16,16,1,16,16,1])
+    ref3 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,1,1,1,32,1,1])
-    ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
-    ref5 = np.array([1,12,1,12,12,12,1,12,12,1])
+    #ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
+    ref5 = np.array([1,4,1,12,12,12,1,12,12,1])
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e13, 20, 1, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
+    minX = np.array([1e8, 1e13, 20, 30, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e17, 20, 30, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
     #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
     #minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
@@ -472,6 +481,7 @@ if __name__ == "__main__":
     print("Bayesim took {} s".format(time.time() - clock0))
     try:
         print("Writing to /blue:")
+        raise ValueError
         marP = marginalP(N, P, refs)
         export_marginal_P(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
         export_magsum(P)
