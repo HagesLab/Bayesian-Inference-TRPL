@@ -63,7 +63,7 @@ def maxP(N,P,refs, minX, maxX):
         wheremax = np.unravel_index(np.argmax(P[ti], axis=None), P[ti].shape)
         print(X[wheremax[0]])
         print("Mag_offset: ", mag_grid[wheremax[1]])
-        print("P = {}".format(np.max(P[ti]))
+        print("P = {}".format(np.max(P[ti])))
 
 def cov_P(N,P,refs, minX, maxX):
     global param_names
@@ -493,15 +493,13 @@ if __name__ == "__main__":
     try:
         print("Writing to /blue:")
         raise ValueError
-        marP = marginalP(N, P, refs)
-        export_marginal_P(marP, np.prod(refs,axis=0), minX, maxX, param_names)
+        export_marginal_P(N, P, refs, minX, maxX, param_names)
         export_magsum(P)
         cov_P(N, P, refs, minX, maxX)
     except:
         print("Write failed; rewriting to backup location /home:")
         wdir = r"/home/cfai2304/super_bayes/"
-        marP = marginalP(N, P, refs)
-        export_marginal_P(marP, np.prod(refs,axis=0), minX, maxX, param_names)
+        export_marginal_P(N, P, refs, minX, maxX, param_names)
         export_magsum(P)
         cov_P(N, P, refs, minX, maxX)
 
