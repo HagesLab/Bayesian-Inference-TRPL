@@ -20,7 +20,7 @@ def norm2(A0, A1, A2, b, c, buffer, err, num_sims, TPB):
         buffer[N-1, y] = abs(A2[-1, y]*c[-2, y]+A1[-1, y]*c[-1, y] - b[-1, y])
         buffer[2*N-1, y] = abs(b[-1, y])
     cuda.syncthreads()
-    rf = N // 2
+    rf = N >> 1
     for i in range(1+thr,N-1,TPB):
         for y in range(num_sims):
             buffer[i, y] = abs(A2[i, y]*c[i-1, y]+A1[i, y]*c[i, y]+A0[i, y]*c[i+1, y] - b[i, y])
@@ -33,7 +33,7 @@ def norm2(A0, A1, A2, b, c, buffer, err, num_sims, TPB):
                 buffer[i, y] = buffer[i, y] + buffer[i+rf, y]
                 buffer[i+N, y] = buffer[i+N, y] + buffer[i+N+rf, y]
         cuda.syncthreads()
-        rf //= 2
+        rf >>= 1
     for y in range(thr, num_sims, TPB):
         err[y] = buffer[0, y]/buffer[N, y]
 
@@ -43,7 +43,7 @@ def pcreduce(ld, d, ud, B, c, buffer, num_sims, TPB):
     rf = 1
     N = len(ld)
     thr = cuda.threadIdx.x
-    while N / rf > 2:
+    while N > 2*rf:
         for i in range(thr, N, TPB):
             for y in range(num_sims):
                 buffer[i, y] = ld[i, y]
