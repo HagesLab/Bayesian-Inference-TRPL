@@ -10,7 +10,7 @@ def lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTOR):
         err -= values
 
         #sig_sq = 1 / (len(plI) - len(X[0])) * np.sum((plI) ** 2, axis=0) # Total error per timestep/observation
-        sig_sq = len(values) / T_FACTOR
+        sig_sq = T_FACTOR
         #P[:, m] -= np.sum((err)**2 / sig_sq + np.log(np.pi*sig_sq)/2, axis=1)
         P[:, m] -= np.sum((err)**2, axis=1) / sig_sq
         P[:, m] -= np.log(np.pi*sig_sq)/2 * len(values)
@@ -21,7 +21,7 @@ def kernel_lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTOR):
     cutoff = math.log10(bval_cutoff)
     num_observations = len(values)
     num_paramsets = len(plI)
-    sig_sq = len(values) / T_FACTOR
+    sig_sq = T_FACTOR
     thr = cuda.grid(1)
     for m in range(len(mag_grid)):
         for j in range(thr, num_paramsets, cuda.gridsize(1)):

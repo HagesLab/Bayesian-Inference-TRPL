@@ -54,26 +54,16 @@ def modelErr2(F, ref):
         pN *= ref[m]                           # Update counter
     return err
 
-
-def marginalP(N, P, refs):                                   # Marginal P's
-    pN   = np.prod(refs, axis=0)
-    ind  = indexGrid(N, refs)
-    marP = []
-    for m in range(len(refs[0])):                            # Loop over axes
-        Pm   = np.zeros(pN[m])
-        for n in np.unique(ind[:,m]):                        # Loop over coord
-            Pm[n] = P[np.where(ind[:,m] == n)].sum()         # Marginal P
-        marP.append(Pm)                                      # Add to list
-    return np.array(marP)
-
 def maxP(N,P,refs, minX, maxX):
     pN = np.prod(refs, axis=0)
     ind = indexGrid(N,refs)
     X = paramGrid(ind, refs, minX, maxX)
-    wheremax = np.unravel_index(np.argmax(P, axis=None), P.shape)
-    print(X[wheremax[0]])
-    print("Mag_offset: ", mag_grid[wheremax[1]])
-    print("P = {}".format(P[wheremax]))
+    for ti, tf in enumerate(T_FACTORS):
+        print("Temperature:", tf)
+        wheremax = np.unravel_index(np.argmax(P[ti], axis=None), P[ti].shape)
+        print(X[wheremax[0]])
+        print("Mag_offset: ", mag_grid[wheremax[1]])
+        print("P = {}".format(np.max(P[ti]))
 
 def cov_P(N,P,refs, minX, maxX):
     global param_names
@@ -84,79 +74,94 @@ def cov_P(N,P,refs, minX, maxX):
         for r in range(q):
             pID_1 = iterables[q]
             pID_2 = iterables[r]
+            for ti, tf in enumerate(T_FACTORS):
+
+                cov_P = np.zeros((pN[pID_1], pN[pID_2]))
+        
+                for i in np.unique(ind[:,pID_1]):
+                    for j in np.unique(ind[:,pID_2]):
+                        # q = P[np.where(np.logical_and(ind[:,pID_1] == i, ind[:,pID_2] == j))]
+                        cov_P[i,j] = P[ti, np.where(np.logical_and(ind[:,pID_1] == i, ind[:,pID_2] == j))].sum()
             
-            cov_P = np.zeros((pN[pID_1], pN[pID_2]))
+                m = pID_1
+                im = np.array([*range(pN[m])]) + 0.5                 # Coords
+                X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+                X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
+                X = X1 * (1 - do_log[m]) + X2 * do_log[m]
+                cov_P = np.hstack((X.reshape((len(X),1)), cov_P))
             
-            for i in np.unique(ind[:,pID_1]):
-                for j in np.unique(ind[:,pID_2]):
-                    # q = P[np.where(np.logical_and(ind[:,pID_1] == i, ind[:,pID_2] == j))]
-                    cov_P[i,j] = P[np.where(np.logical_and(ind[:,pID_1] == i, ind[:,pID_2] == j))].sum()
+                m = pID_2
+                im = np.array([*range(pN[m])]) + 0.5                 # Coords
+                X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+                X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
+                X = np.append(np.array([-1]), (X1 * (1 - do_log[m]) + X2 * do_log[m]), axis=0)
+                cov_P = np.vstack((X.reshape((1, len(X))), cov_P))
             
-            m = pID_1
-            im = np.array([*range(pN[m])]) + 0.5                 # Coords
-            X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-            X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
-            X = X1 * (1 - do_log[m]) + X2 * do_log[m]
-            cov_P = np.hstack((X.reshape((len(X),1)), cov_P))
-            
-            m = pID_2
-            im = np.array([*range(pN[m])]) + 0.5                 # Coords
-            X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-            X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
-            X = np.append(np.array([-1]), (X1 * (1 - do_log[m]) + X2 * do_log[m]), axis=0)
-            cov_P = np.vstack((X.reshape((1, len(X))), cov_P))
-            
-            print("Writing covariance file {} and {}".format(param_names[pID_1], param_names[pID_2]))
-            np.save(wdir + out_filename +\
-                    "_BAYRES_" + param_names[pID_1] + "-" + param_names[pID_2] + ".npy", cov_P)
+                print("Writing covariance file {} and {}".format(param_names[pID_1], param_names[pID_2]))
+                np.save("{}_BAYRES_{}_{}-{}.npy".format(wdir + out_filename, int(tf), param_names[pID_1], param_names[pID_2]), cov_P)
 
         if len(mag_grid) > 1:
             pID_1 = iterables[q]
-            cov_P = np.zeros((pN[pID_1], len(mag_grid)))
+            for ti, tf in enumerate(T_FACTORS):
 
-            for i in np.unique(ind[:,pID_1]):
-                cov_P[i] = np.sum(P[np.where(ind[:, pID_1] == i)], axis=0)
+                cov_P = np.zeros((pN[pID_1], len(mag_grid)))
+                Pti = P[ti]
+                for i in np.unique(ind[:,pID_1]):
+                    cov_P[i] = np.sum(Pti[np.where(ind[:, pID_1] == i)], axis=0)
 
-            m = pID_1
-            im = np.array([*range(pN[m])]) + 0.5                 # Coords
-            X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-            X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
-            X = X1 * (1 - do_log[m]) + X2 * do_log[m]
+                m = pID_1
+                im = np.array([*range(pN[m])]) + 0.5                 # Coords
+                X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+                X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
+                X = X1 * (1 - do_log[m]) + X2 * do_log[m]
 
 
-            cov_P = np.hstack((X.reshape((len(X), 1)), cov_P))
-            X = np.append(np.array([-1]), mag_grid, axis=0)
-            cov_P = np.vstack((X.reshape((1, len(X))), cov_P))
-            print("Writing covariance file {} and mag_offset".format(param_names[pID_1]))
-            np.save(wdir + out_filename + "_BAYRES_" + param_names[pID_1] + "-mag_offset.npy", cov_P)
+                cov_P = np.hstack((X.reshape((len(X), 1)), cov_P))
+                X = np.append(np.array([-1]), mag_grid, axis=0)
+                cov_P = np.vstack((X.reshape((1, len(X))), cov_P))
+                print("Writing covariance file {} and mag_offset".format(param_names[pID_1]))
+                np.save("{}_BAYRES_{}_{}-magoffset.npy".format(wdir + out_filename,int(tf), param_names[pID_1]), cov_P)
     return
         
-def export_marginal_P(marP, pN, minX, maxX, param_names):
+def export_marginal_P(N, P, refs, minX, maxX, param_names):
+    pN   = np.prod(refs, axis=0)
+    ind  = indexGrid(N, refs)
+    for ti, tf in enumerate(T_FACTORS):
+        print("Temperature:", tf)
+        marP = []
+        for m in range(len(refs[0])):                            # Loop over axes
+            Pm   = np.zeros(pN[m])
+            for n in np.unique(ind[:,m]):                        # Loop over coord
+                Pm[n] = P[ti,np.where(ind[:,m] == n)].sum()         # Marginal P
+            marP.append(Pm)                                      # Add to list
+        marP = np.array(marP)
 
-    for m in np.where(pN > 1)[0]:
-        print("Writing marginal {} file".format(param_names[m]))
-        im = np.array([*range(pN[m])]) + 0.5                 # Coords
-        #X = minX[m] + (maxX[m]-minX[m])*im/pN[m]             # Param values
-        X_lin   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-        X_log = minX[m] * (maxX[m]/minX[m])**((im)/pN[m])
-        X =  X_lin * (1-do_log[m]) + X_log * do_log[m]
+        for m in np.where(pN > 1)[0]:
+            print("Writing marginal {} file".format(param_names[m]))
+            im = np.array([*range(pN[m])]) + 0.5                 # Coords
+            #X = minX[m] + (maxX[m]-minX[m])*im/pN[m]             # Param values
+            X_lin   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+            X_log = minX[m] * (maxX[m]/minX[m])**((im)/pN[m])
+            X =  X_lin * (1-do_log[m]) + X_log * do_log[m]
 
-        print(np.vstack((X, marP[m])).T)
-        np.savetxt(wdir + out_filename + "_BAYRES_" + param_names[m] + ".csv", np.vstack((X, marP[m])).T, delimiter=",")
+            print(np.vstack((X, marP[m])).T)
+            np.savetxt("{}_BAYRES_{}_{}.csv".format(wdir + out_filename, int(tf), param_names[m]), np.vstack((X, marP[m])).T, delimiter=",")
     return        
 
 def export_magsum(P):
     if len(mag_grid) > 1:
-        sum_by_mag = np.sum(P, axis=0)
-        print(np.vstack((mag_grid, sum_by_mag)).T)
-        np.savetxt(wdir + out_filename + "_BAYRES_" + "mag_offset.csv", np.vstack((mag_grid, sum_by_mag)).T, delimiter=",")
+        for ti, tf in enumerate(T_FACTORS):
+            sum_by_mag = np.sum(P[ti], axis=0)
+            print(np.vstack((mag_grid, sum_by_mag)).T)
+            np.savetxt("{}_BAYRES_{}_magoffset.csv".format(wdir + out_filename, int(tf)), np.vstack((mag_grid, sum_by_mag)).T, delimiter=",")
     return
 
 def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
-    N   = N[np.where(P > minP[nref])]                    # P < minP
+    if P is not None:
+        N   = N[np.where(np.sum(np.mean(P, axis=0), axis=1) > minP[nref])] # P < minP - avg over tfs, sum over mag
     N   = refineGrid(N, refs[nref])                      # Refine grid
     Np  = np.prod(refs[nref])                            # Params per set
-    P = np.zeros((len(N),  len(mag_grid)))                               # Likelihoods
+    P = np.zeros((len(T_FACTORS), len(N),  len(mag_grid)))                               # Likelihoods
     print("ref level, N: ", nref, len(N))
 
     X = np.empty((len(N), len(refs[0])))
@@ -171,7 +176,7 @@ def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
     return N, P, X
 
 def simulate(model, P, ic_num, values, X, timepoints_per_ic, 
-             sim_params, init_params, T_FACTOR, gpu_id, num_gpus):
+             sim_params, init_params, T_FACTORS, gpu_id, num_gpus):
     try:
         cuda.select_device(gpu_id)
     except IndexError:
@@ -202,7 +207,7 @@ def simulate(model, P, ic_num, values, X, timepoints_per_ic,
                 plI = np.log10(plI)
 
             try:
-                #np.save("{}{}plI_grp{}.npy".format(wdir,out_filename, blk), plI)
+                #np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk), plI)
                 print("Saved plI of size ", plI.shape)
             except Exception as e:
                 print("Warning: save failed\n", e)
@@ -210,7 +215,7 @@ def simulate(model, P, ic_num, values, X, timepoints_per_ic,
         else:
             print("Loading plI group {}".format(blk))
             try:
-                plI = np.load("{}{}plI_grp{}.npy".format(wdir,out_filename, blk))
+                plI = np.load("{}{}plI{}_grp{}.npy".format(wdir,out_filename, ic_num, blk))
                 print("Loaded plI of size ", plI.shape)
             except Exception as e:
                 print("Error: load failed\n", e)
@@ -221,10 +226,11 @@ def simulate(model, P, ic_num, values, X, timepoints_per_ic,
         v_dev = cuda.to_device(values)
         m_dev = cuda.to_device(mag_grid)
         plI_dev = cuda.to_device(plI)
-        P_dev = cuda.to_device(np.zeros_like(P[blk:blk+size]))
-        kernel_lnP[num_SMs, TPB](P_dev, plI_dev, v_dev, m_dev, bval_cutoff, T_FACTOR)
-        cuda.synchronize()
-        P[blk:blk+size] += P_dev.copy_to_host()
+        for ti, tf in enumerate(T_FACTORS):
+            P_dev = cuda.to_device(np.zeros_like(P[ti, blk:blk+size]))
+            kernel_lnP[num_SMs, TPB](P_dev, plI_dev, v_dev, m_dev, bval_cutoff, tf)
+            cuda.synchronize()
+            P[ti, blk:blk+size] += P_dev.copy_to_host()
     return
 
 def normalize(P):
@@ -234,8 +240,9 @@ def normalize(P):
     # without causing overflow
     # Key is only to add or subtract from lnP - that way any introduced factors cancel out
     # during normalize by sum(P)
-    P = np.exp(P - np.max(P) + 1000*np.log(2) - np.log(P.size))
-    P  /= np.sum(P)                                      # Normalize P's
+    for ti, tf in enumerate(T_FACTORS):
+        P[ti] = np.exp(P[ti] - np.max(P[ti]) + 1000*np.log(2) - np.log(P[ti].size))
+        P[ti]  /= np.sum(P[ti])                                      # Normalize P's
     return P
 
 def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):        # Driver function
@@ -243,12 +250,17 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     global has_GPU
     global init_mode
     global GPU_GROUP_SIZE
+    global T_FACTORS
     for nref in range(len(refs)):                            # Loop refinements
         num_curves = len(init_params)
         timepoints_per_ic = sim_params[3] // sim_params[4] + 1
         print(timepoints_per_ic)
         print(len(data[0]))
         assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
+        T_FACTORS = np.geomspace(1, len(data[0]), 8)
+        T_FACTORS = np.array([100.0, 1000.0])
+        T_FACTORS = len(data[0]) * (T_FACTORS ** -1)
+        print("Temperatures: ", T_FACTORS)
 
         N, P, X = make_grid(N, P, nref, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
 
@@ -261,12 +273,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             values = data[1][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
             std = data[2][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
             assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
-            try:
-                T_FACTOR = float(sys.argv[5]) 
-            except Exception:
-                T_FACTOR = len(values)
 
-            print("Temperature factor: ", str(T_FACTOR), "T=", str(len(values) / T_FACTOR))
             print("values", values)
 
             num_gpus = 8
@@ -274,7 +281,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             for gpu_id in range(num_gpus):
                 print("Starting thread {}".format(gpu_id))
                 thread = threading.Thread(target=simulate, args=(model, P, ic_num, values, X, 
-                                          timepoints_per_ic, sim_params, init_params, T_FACTOR, gpu_id, num_gpus))
+                                          timepoints_per_ic, sim_params, init_params, T_FACTORS, gpu_id, num_gpus))
                 threads.append(thread)
                 thread.start()
 
@@ -317,6 +324,7 @@ def get_data(exp_file, scale_f=1, sample_f=1, noisy=False):
         if noisy:
             # Assume const uncertainty, set minimum observable value to that
             global bval_cutoff
+            bval_cutoff = np.mean(uncertainty)
             PL[PL < bval_cutoff] = bval_cutoff
         else:
             # Set minimum observable to 1
@@ -365,27 +373,27 @@ if __name__ == "__main__":
 
     # This code follows a strict order of parameters:
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda]
-    param_names = ["n0", "p0", "mu_n", "mu_p", "B", "Sf", "Sb", "tau_n", "tau_p", "rel. permitivity^-1"]
+    param_names = ["n0", "p0", "mun", "mup", "B", "Sf", "Sb", "taun", "taup", "lambda"]
     unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0])
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
-    GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
+    GPU_GROUP_SIZE = 2 ** 14                  # Number of simulations assigned to GPU at a time - GPU has limited memory
     ref1 = np.array([1,10,1,1,10,10,1,10,10,1])
     ref2 = np.array([1,16,1,1,16,16,1,16,16,1])
     ref3 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,1,1,1,32,1,1])
     #ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
-    ref5 = np.array([1,4,1,12,12,12,1,12,12,1])
-    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
+    ref5 = np.array([1,8,1,4,8,8,1,8,8,1])
+    refs = np.array([ref5])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e13, 20, 30, 1e-11, 1e-1, 10, 1, 1, 10**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 20, 30, 1e-9, 1e5, 10, 1000, 1000, 10**-1])
+    minX = np.array([1e8, 1e13, 20, 1, 1e-12, 1e-3, 10, 1, 1, 10**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e17, 20, 100, 1e-8, 1e3, 10, 1000, 1000, 10**-1])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
     #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
     #minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
     #maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1000, 871, 10**-1])
-    mag_scale = (-2,2)
+    mag_scale = (-1,1)
     mag_points = 31
     mag_grid = np.linspace(mag_scale[0], mag_scale[1], mag_points)
     #mag_grid = [0]
@@ -393,15 +401,15 @@ if __name__ == "__main__":
     LOADIN_PL = sys.argv[4] != "new"
     OVERRIDE_EQUAL_MU = True
     LOG_PL = True
+
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
     data_is_noisy = True
-    bval_cutoff = 1e15 * scale_f
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
 
     N    = np.array([0])                              # Initial N
-    P    = np.array([1.0])                            # Initial P
+    P    = None                            # Initial P
 
     wdir = r"/blue/c.hages/cfai2304/"
     experimental_data_filename = sys.argv[1]
@@ -458,7 +466,7 @@ if __name__ == "__main__":
             TPB = (2 ** 7,)
             max_sims_per_block = 3           # Maximum of 6 due to shared memory limit
             from pvSimPCR import pvSim
-            from probs import lnP, kernel_lnP
+            from probs import kernel_lnP
         else:
             print("No GPU detected - reverting to CPU simulation")
             num_SMs = -1
@@ -479,19 +487,22 @@ if __name__ == "__main__":
     clock0 = time.time()
     N, P = bayes(pvSim, N, P, refs, minX, maxX, iniPar, simPar, minP, e_data)
     print("Bayesim took {} s".format(time.time() - clock0))
+
+    minX /= unit_conversions
+    maxX /= unit_conversions
     try:
         print("Writing to /blue:")
         raise ValueError
         marP = marginalP(N, P, refs)
-        export_marginal_P(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
+        export_marginal_P(marP, np.prod(refs,axis=0), minX, maxX, param_names)
         export_magsum(P)
-        cov_P(N, P, refs, minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1))
+        cov_P(N, P, refs, minX, maxX)
     except:
         print("Write failed; rewriting to backup location /home:")
         wdir = r"/home/cfai2304/super_bayes/"
         marP = marginalP(N, P, refs)
-        export_marginal_P(marP, np.prod(refs,axis=0), minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1), param_names)
+        export_marginal_P(marP, np.prod(refs,axis=0), minX, maxX, param_names)
         export_magsum(P)
-        cov_P(N, P, refs, minX * (unit_conversions ** -1), maxX * (unit_conversions ** -1))
+        cov_P(N, P, refs, minX, maxX)
 
-    maxP(N, P, refs, minX *(unit_conversions ** -1) , maxX * (unit_conversions ** -1))
+    maxP(N, P, refs, minX, maxX)
