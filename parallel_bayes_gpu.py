@@ -206,11 +206,12 @@ def simulate(model, P, ic_num, values, X, timepoints_per_ic,
                 plI[plI<10*sys.float_info.min] = 10*sys.float_info.min
                 plI = np.log10(plI)
 
-            try:
-                #np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk), plI)
-                print("Saved plI of size ", plI.shape)
-            except Exception as e:
-                print("Warning: save failed\n", e)
+            if "+" in sys.argv[4]:
+                try:
+                    np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk), plI)
+                    print("Saved plI of size ", plI.shape)
+                except Exception as e:
+                    print("Warning: save failed\n", e)
 
         else:
             print("Loading plI group {}".format(blk))
@@ -378,13 +379,13 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 2 ** 14                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    ref1 = np.array([1,10,1,1,10,10,1,10,10,1])
+    ref1 = np.array([1,10,1,10,10,10,1,10,10,1])
     ref2 = np.array([1,16,1,1,16,16,1,16,16,1])
     ref3 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,1,1,1,32,1,1])
     #ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
     ref5 = np.array([1,8,1,4,8,8,1,8,8,1])
-    refs = np.array([ref5])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
 
     minX = np.array([1e8, 1e13, 20, 1, 1e-12, 1e-3, 10, 1, 1, 10**-1])                        # Smallest param v$
@@ -398,7 +399,7 @@ if __name__ == "__main__":
     mag_grid = np.linspace(mag_scale[0], mag_scale[1], mag_points)
     #mag_grid = [0]
 
-    LOADIN_PL = sys.argv[4] != "new"
+    LOADIN_PL = "load" in sys.argv[4]
     OVERRIDE_EQUAL_MU = True
     LOG_PL = True
 
@@ -492,7 +493,6 @@ if __name__ == "__main__":
     maxX /= unit_conversions
     try:
         print("Writing to /blue:")
-        raise ValueError
         export_marginal_P(N, P, refs, minX, maxX, param_names)
         export_magsum(P)
         cov_P(N, P, refs, minX, maxX)
