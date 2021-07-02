@@ -74,8 +74,19 @@ def cov_P(N,P,refs, minX, maxX):
         for r in range(q):
             pID_1 = iterables[q]
             pID_2 = iterables[r]
-            for ti, tf in enumerate(T_FACTORS):
+            m = pID_1
+            im = np.array([*range(pN[m])]) + 0.5                 # Coords
+            X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+            X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
+            X = X1 * (1 - do_log[m]) + X2 * do_log[m]
 
+            m = pID_2
+            im = np.array([*range(pN[m])]) + 0.5                 # Coords
+            X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+            X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
+            Y = np.append(np.array([-1]), (X1 * (1 - do_log[m]) + X2 * do_log[m]), axis=0)
+
+            for ti, tf in enumerate(T_FACTORS):
                 cov_P = np.zeros((pN[pID_1], pN[pID_2]))
         
                 for i in np.unique(ind[:,pID_1]):
@@ -83,38 +94,25 @@ def cov_P(N,P,refs, minX, maxX):
                         # q = P[np.where(np.logical_and(ind[:,pID_1] == i, ind[:,pID_2] == j))]
                         cov_P[i,j] = P[ti, np.where(np.logical_and(ind[:,pID_1] == i, ind[:,pID_2] == j))].sum()
             
-                m = pID_1
-                im = np.array([*range(pN[m])]) + 0.5                 # Coords
-                X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-                X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
-                X = X1 * (1 - do_log[m]) + X2 * do_log[m]
                 cov_P = np.hstack((X.reshape((len(X),1)), cov_P))
-            
-                m = pID_2
-                im = np.array([*range(pN[m])]) + 0.5                 # Coords
-                X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-                X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
-                X = np.append(np.array([-1]), (X1 * (1 - do_log[m]) + X2 * do_log[m]), axis=0)
-                cov_P = np.vstack((X.reshape((1, len(X))), cov_P))
+                cov_P = np.vstack((Y.reshape((1, len(Y))), cov_P))
             
                 print("Writing covariance file {} and {}".format(param_names[pID_1], param_names[pID_2]))
                 np.save("{}_BAYRES_{}_{}-{}.npy".format(wdir + out_filename, int(tf), param_names[pID_1], param_names[pID_2]), cov_P)
 
         if len(mag_grid) > 1:
             pID_1 = iterables[q]
-            for ti, tf in enumerate(T_FACTORS):
+            m = pID_1
+            im = np.array([*range(pN[m])]) + 0.5                 # Coords
+            X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+            X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
+            X = X1 * (1 - do_log[m]) + X2 * do_log[m]
 
+            for ti, tf in enumerate(T_FACTORS):
                 cov_P = np.zeros((pN[pID_1], len(mag_grid)))
                 Pti = P[ti]
                 for i in np.unique(ind[:,pID_1]):
                     cov_P[i] = np.sum(Pti[np.where(ind[:, pID_1] == i)], axis=0)
-
-                m = pID_1
-                im = np.array([*range(pN[m])]) + 0.5                 # Coords
-                X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-                X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
-                X = X1 * (1 - do_log[m]) + X2 * do_log[m]
-
 
                 cov_P = np.hstack((X.reshape((len(X), 1)), cov_P))
                 X = np.append(np.array([-1]), mag_grid, axis=0)
@@ -265,8 +263,6 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 
         N, P, X = make_grid(N, P, nref, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
 
-        ## OVERRIDE: MAKE SRH TAUS EQUAL
-        #X[:,8] = X[:,7]
         if OVERRIDE_EQUAL_MU:
             X[:,2] = X[:,3]
         for ic_num in range(num_curves):
@@ -347,9 +343,9 @@ def get_initpoints(init_file, scale_f=1e-21):
 if __name__ == "__main__":
     # simPar
     #Time    = 250                                 # Final time (ns)
-    #Length = 2000
     #Time    = 131867*0.025
     Time = 2000
+    #Length = 2000
     Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
@@ -473,10 +469,6 @@ if __name__ == "__main__":
             num_SMs = -1
             from pvSim import pvSim
 
-        #_continue = input("Continue? (y/n)")
-        
-        #if not (_continue == 'y'): raise KeyboardInterrupt("Aborted")
-        
     except Exception as oops:
         print(oops)
         sys.exit(0)
