@@ -65,92 +65,88 @@ def maxP(N,P,refs, minX, maxX):
         print("Mag_offset: ", mag_grid[wheremax[1]])
         print("P = {}".format(np.max(P[ti])))
 
-def cov_P(N,P,refs, minX, maxX):
+def covar(N,P,refs, minX, maxX):
     global param_names
     pN   = np.prod(refs, axis=0)
     ind  = indexGrid(N, refs)
     iterables = np.where(pN > 1)[0]
     for q in range(len(iterables)):
-        for r in range(q):
-            pID_1 = iterables[q]
-            pID_2 = iterables[r]
-            m = pID_1
-            im = np.array([*range(pN[m])]) + 0.5                 # Coords
-            X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-            X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
-            X = X1 * (1 - do_log[m]) + X2 * do_log[m]
+        pID_1 = iterables[q]
+        m = pID_1
+        im = np.array([*range(pN[m])]) + 0.5                 # Coords
+        X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+        X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
+        X = X1 * (1 - do_log[m]) + X2 * do_log[m]
+        x_unique = np.unique(ind[:, pID_1])
 
+        for r in range(q):
+            pID_2 = iterables[r]
             m = pID_2
             im = np.array([*range(pN[m])]) + 0.5                 # Coords
             X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
             X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
             Y = np.append(np.array([-1]), (X1 * (1 - do_log[m]) + X2 * do_log[m]), axis=0)
+            y_unique = np.unique(ind[:, pID_2])
 
+            cov_P = np.zeros((pN[pID_1], pN[pID_2]))
+            cov_P = np.hstack((X.reshape((len(X),1)), cov_P))
+            cov_P = np.vstack((Y.reshape((1, len(Y))), cov_P))
+
+            print("Writing covariance file {} and {}".format(param_names[pID_1], param_names[pID_2]))
+            
             for ti, tf in enumerate(T_FACTORS):
-                cov_P = np.zeros((pN[pID_1], pN[pID_2]))
-        
-                for i in np.unique(ind[:,pID_1]):
-                    for j in np.unique(ind[:,pID_2]):
-                        # q = P[np.where(np.logical_and(ind[:,pID_1] == i, ind[:,pID_2] == j))]
-                        cov_P[i,j] = P[ti, np.where(np.logical_and(ind[:,pID_1] == i, ind[:,pID_2] == j))].sum()
+                Pti = P[ti]
+                # Find all N where param 1 is i and param 2 is j
+                # Since sum() is optimized this is better than a linear scan and tally over P
+                for i in x_unique:
+                    where_xi = ind[:,pID_1] == i
+                    for j in y_unique:
+                        cov_P[i+1,j+1] = Pti[np.where(np.logical_and(where_xi, ind[:,pID_2] == j))].sum()
             
-                cov_P = np.hstack((X.reshape((len(X),1)), cov_P))
-                cov_P = np.vstack((Y.reshape((1, len(Y))), cov_P))
-            
-                print("Writing covariance file {} and {}".format(param_names[pID_1], param_names[pID_2]))
                 np.save("{}_BAYRES_{}_{}-{}.npy".format(wdir + out_filename, int(tf), param_names[pID_1], param_names[pID_2]), cov_P)
 
         if len(mag_grid) > 1:
-            pID_1 = iterables[q]
-            m = pID_1
-            im = np.array([*range(pN[m])]) + 0.5                 # Coords
-            X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-            X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
-            X = X1 * (1 - do_log[m]) + X2 * do_log[m]
+            Y = np.append(np.array([-1]), mag_grid, axis=0)
 
+            cov_P = np.zeros((pN[pID_1], len(mag_grid)))
+            cov_P = np.hstack((X.reshape((len(X), 1)), cov_P))
+            cov_P = np.vstack((Y.reshape((1, len(Y))), cov_P))
+
+            print("Writing covariance file {} and mag_offset".format(param_names[pID_1]))
             for ti, tf in enumerate(T_FACTORS):
-                cov_P = np.zeros((pN[pID_1], len(mag_grid)))
                 Pti = P[ti]
-                for i in np.unique(ind[:,pID_1]):
-                    cov_P[i] = np.sum(Pti[np.where(ind[:, pID_1] == i)], axis=0)
+                for i in x_unique:
+                    cov_P[i+1,1:] = np.sum(Pti[np.where(ind[:, pID_1] == i)], axis=0)
 
-                cov_P = np.hstack((X.reshape((len(X), 1)), cov_P))
-                X = np.append(np.array([-1]), mag_grid, axis=0)
-                cov_P = np.vstack((X.reshape((1, len(X))), cov_P))
-                print("Writing covariance file {} and mag_offset".format(param_names[pID_1]))
                 np.save("{}_BAYRES_{}_{}-magoffset.npy".format(wdir + out_filename,int(tf), param_names[pID_1]), cov_P)
     return
         
 def export_marginal_P(N, P, refs, minX, maxX, param_names):
     pN   = np.prod(refs, axis=0)
     ind  = indexGrid(N, refs)
-    for ti, tf in enumerate(T_FACTORS):
-        print("Temperature:", tf)
-        marP = []
-        for m in range(len(refs[0])):                            # Loop over axes
-            Pm   = np.zeros(pN[m])
+    for m in np.where(pN > 1)[0]:
+        print("Writing marginal {} file".format(param_names[m]))
+        im = np.array([*range(pN[m])]) + 0.5                 # Coords
+        #X = minX[m] + (maxX[m]-minX[m])*im/pN[m]             # Param values
+        X_lin   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
+        X_log = minX[m] * (maxX[m]/minX[m])**((im)/pN[m])
+        X =  X_lin * (1-do_log[m]) + X_log * do_log[m]
+
+        marP = np.zeros(pN[m])
+        marP = np.vstack((X, marP)).T
+        for ti, tf in enumerate(T_FACTORS):
+            print("Temperature:", tf)
             for n in np.unique(ind[:,m]):                        # Loop over coord
-                Pm[n] = P[ti,np.where(ind[:,m] == n)].sum()         # Marginal P
-            marP.append(Pm)                                      # Add to list
-        marP = np.array(marP)
+                marP[n, 1] = P[ti,np.where(ind[:,m] == n)].sum()
 
-        for m in np.where(pN > 1)[0]:
-            print("Writing marginal {} file".format(param_names[m]))
-            im = np.array([*range(pN[m])]) + 0.5                 # Coords
-            #X = minX[m] + (maxX[m]-minX[m])*im/pN[m]             # Param values
-            X_lin   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-            X_log = minX[m] * (maxX[m]/minX[m])**((im)/pN[m])
-            X =  X_lin * (1-do_log[m]) + X_log * do_log[m]
-
-            print(np.vstack((X, marP[m])).T)
-            np.savetxt("{}_BAYRES_{}_{}.csv".format(wdir + out_filename, int(tf), param_names[m]), np.vstack((X, marP[m])).T, delimiter=",")
+            print(marP)
+            np.savetxt("{}_BAYRES_{}_{}.csv".format(wdir + out_filename, int(tf), param_names[m]), marP, delimiter=",")
     return        
 
 def export_magsum(P):
     if len(mag_grid) > 1:
         for ti, tf in enumerate(T_FACTORS):
             sum_by_mag = np.sum(P[ti], axis=0)
-            print(np.vstack((mag_grid, sum_by_mag)).T)
             np.savetxt("{}_BAYRES_{}_magoffset.csv".format(wdir + out_filename, int(tf)), np.vstack((mag_grid, sum_by_mag)).T, delimiter=",")
     return
 
@@ -256,9 +252,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
         print(timepoints_per_ic)
         print(len(data[0]))
         assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
-        T_FACTORS = np.geomspace(1, len(data[0]), 8)
-        T_FACTORS = np.array([100.0, 1000.0])
-        T_FACTORS = len(data[0]) * (T_FACTORS ** -1)
+        T_FACTORS = np.geomspace(len(data[0]),1, 3)
         print("Temperatures: ", T_FACTORS)
 
         N, P, X = make_grid(N, P, nref, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
@@ -374,17 +368,17 @@ if __name__ == "__main__":
     unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0])
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
-    GPU_GROUP_SIZE = 2 ** 14                  # Number of simulations assigned to GPU at a time - GPU has limited memory
+    GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
     ref1 = np.array([1,10,1,10,10,10,1,10,10,1])
-    ref2 = np.array([1,16,1,1,16,16,1,16,16,1])
+    ref2 = np.array([1,24,1,1,24,24,1,24,24,1])
     ref3 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,1,1,1,32,1,1])
     #ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
     ref5 = np.array([1,8,1,4,8,8,1,8,8,1])
-    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref5])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e13, 20, 1, 1e-12, 1e-3, 10, 1, 1, 10**-1])                        # Smallest param v$
+    minX = np.array([1e8, 1e13, 20, 1e-10, 1e-12, 1e-3, 10, 1, 1, 10**-1])                        # Smallest param v$
     maxX = np.array([1e8, 1e17, 20, 100, 1e-8, 1e3, 10, 1000, 1000, 10**-1])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
     #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
@@ -487,12 +481,13 @@ if __name__ == "__main__":
         print("Writing to /blue:")
         export_marginal_P(N, P, refs, minX, maxX, param_names)
         export_magsum(P)
-        cov_P(N, P, refs, minX, maxX)
-    except:
+        covar(N, P, refs, minX, maxX)
+    except Exception as e:
+        print(e)
         print("Write failed; rewriting to backup location /home:")
         wdir = r"/home/cfai2304/super_bayes/"
         export_marginal_P(N, P, refs, minX, maxX, param_names)
         export_magsum(P)
-        cov_P(N, P, refs, minX, maxX)
+        covar(N, P, refs, minX, maxX)
 
     maxP(N, P, refs, minX, maxX)
