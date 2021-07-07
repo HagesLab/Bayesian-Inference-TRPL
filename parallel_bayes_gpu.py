@@ -9,7 +9,6 @@ eps0 = 8.854 * 1e-12 * 1e-9 # [C / V m] to {C / V nm}
 q = 1.0 # [e]
 q_C = 1.602e-19 # [C]
 kB = 8.61773e-5  # [eV / K]
-
 import numpy as np
 
 def indexGrid(N, refs):                        # Arrays of cell coordinates
@@ -41,18 +40,27 @@ def refineGrid (N, ref):                       # Refine grid
     N   = np.add.outer(reN, N*siz)             # 2D array of indexes
     return N.flatten(order='F')                # Return flattened array
 
-def modelErr2(F, ref):
-    N   = np.prod(ref)
-    pN = 1
-    err = np.zeros((len(ref), len(F[0])))
-    for m in range(len(ref)):
-        dF  = 1.5*np.abs(F - np.roll(F, -pN, axis=0))	   # Absolute differences
-        dk  = ref[m]*pN                        # Step size
-        for n in range(pN):                    # Need pN passes
-            dF[dk-pN+n:N:dk] = 0               # Zero wrapped entries
-        err[m] = np.amax(dF, axis=0)
-        pN *= ref[m]                           # Update counter
-    return err
+def random_grid(minX, maxX, num_points, do_grid=False, refs=None):
+    grid = np.empty((num_points, len(minX)))
+    
+    for i in range(len(grid[0])): # For each parameter
+        if minX[i] == maxX[i]:
+            grid[:,i] = np.array(minX[i])
+        else:
+            if do_grid:
+                ind = np.arange(refs[i])
+                if do_log[i]:
+                    possible_vals = minX[i] * (maxX[i]/minX[i]) ** ((ind+0.5) / refs[i])
+                else:
+                    possible_vals = minX[i] + (maxX[i]-minX[i]) * (ind+0.5) / refs[i]
+                grid[:,i] = np.random.choice(possible_vals, size=(len(grid[:,i],)))
+            else:
+                if do_log[i]:
+                    grid[:,i] = 10 ** np.random.uniform(np.log10(minX[i]), np.log10(maxX[i]), (len(grid[:,i],)))
+                else:
+                    grid[:,i] = np.random.uniform(minX[i], maxX[i], (len(grid[:,i],)))
+            
+    return grid
 
 def maxP(N,P,refs, minX, maxX):
     pN = np.prod(refs, axis=0)
@@ -150,23 +158,40 @@ def export_magsum(P):
             np.savetxt("{}_BAYRES_{}_magoffset.csv".format(wdir + out_filename, int(tf)), np.vstack((mag_grid, sum_by_mag)).T, delimiter=",")
     return
 
-def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
-    if P is not None:
-        N   = N[np.where(np.sum(np.mean(P, axis=0), axis=1) > minP[nref])] # P < minP - avg over tfs, sum over mag
-    N   = refineGrid(N, refs[nref])                      # Refine grid
-    Np  = np.prod(refs[nref])                            # Params per set
-    P = np.zeros((len(T_FACTORS), len(N),  len(mag_grid)))                               # Likelihoods
-    print("ref level, N: ", nref, len(N))
+def export_random_marP(X, P):
+    P_over_mags = np.sum(P, axis=2)
+    for ti, tf in enumerate(T_FACTORS):
+        Pti = P_over_mags[ti]
+        np.save("{}_BAYRAN_{}.npy".format(wdir + out_filename, int(tf)), np.hstack((X, Pti.reshape((len(Pti), 1)))))
+        if len(mag_grid) > 1:
+            sum_by_mag = np.sum(P[ti], axis=0)
+            np.save("{}_BAYRAN_{}_mag_offset.npy".format(wdir + out_filename, int(tf)), np.vstack((mag_grid, sum_by_mag)).T)
+    return
 
-    X = np.empty((len(N), len(refs[0])))
+def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
+    if RANDOM_SAMPLE:
+        N = np.arange(NUM_POINTS)
+        print(NUM_POINTS, "random points")
+        X = random_grid(minX, maxX, NUM_POINTS, do_grid=False, refs=refs)
+
+    else:
+        if P is not None:
+            N   = N[np.where(np.sum(np.mean(P, axis=0), axis=1) > minP[nref])] # P < minP - avg over tfs, sum over mag
+        N   = refineGrid(N, refs[nref])                      # Refine grid
+        Np  = np.prod(refs[nref])                            # Params per set
+        print("ref level, N: ", nref, len(N))
+
+        X = np.empty((len(N), len(refs[0])))
         
-    # TODO: Determine block size from GPU info instead of refinement?
-    # Np cannot be modified! indexGrid assumes a certain value of Np
-    for n in range(0, len(N), Np):                       # Loop over blks
-        Nn  = N[n:n+Np]                                  # Cells block
-        ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
-        #X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
-        X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
+        # TODO: Determine block size from GPU info instead of refinement?
+        # Np cannot be modified! indexGrid assumes a certain value of Np
+        for n in range(0, len(N), Np):                       # Loop over blks
+            Nn  = N[n:n+Np]                                  # Cells block
+            ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
+            #X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
+            X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
+    P = np.zeros((len(T_FACTORS), len(N),  len(mag_grid)))                               # Likelihoods
+
     return N, P, X
 
 def simulate(model, P, ic_num, values, X, timepoints_per_ic, 
@@ -246,14 +271,15 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     global init_mode
     global GPU_GROUP_SIZE
     global T_FACTORS
+    num_curves = len(init_params)
+    timepoints_per_ic = sim_params[3] // sim_params[4] + 1
+    print(timepoints_per_ic)
+    print(len(data[0]))
+    assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
+    T_FACTORS = np.geomspace(len(data[0]),1, 16)
+    print("Temperatures: ", T_FACTORS)
+
     for nref in range(len(refs)):                            # Loop refinements
-        num_curves = len(init_params)
-        timepoints_per_ic = sim_params[3] // sim_params[4] + 1
-        print(timepoints_per_ic)
-        print(len(data[0]))
-        assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
-        T_FACTORS = np.geomspace(len(data[0]),1, 3)
-        print("Temperatures: ", T_FACTORS)
 
         N, P, X = make_grid(N, P, nref, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
 
@@ -282,7 +308,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
                 print("Thread {} closed".format(gpu_id))
 
         P = normalize(P)
-    return N, P
+    return N, P, X
 
 
 #-----------------------------------------------------------------------------#
@@ -337,15 +363,15 @@ def get_initpoints(init_file, scale_f=1e-21):
 if __name__ == "__main__":
     # simPar
     #Time    = 250                                 # Final time (ns)
-    #Time    = 131867*0.025
-    Time = 2000
+    Time    = 131867*0.025
+    #Time = 2000
     #Length = 2000
     Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
     #T   = 4000
-    #T   = 131867                                # Time points
-    T = 80000
+    T   = 131867                                # Time points
+    #T = 80000
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
@@ -375,7 +401,7 @@ if __name__ == "__main__":
     ref4 = np.array([1,1,1,1,1,1,1,32,1,1])
     #ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
     ref5 = np.array([1,8,1,4,8,8,1,8,8,1])
-    refs = np.array([ref5])#, ref2, ref3])                         # Refinements
+    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
 
     minX = np.array([1e8, 1e13, 20, 1e-10, 1e-12, 1e-3, 10, 1, 1, 10**-1])                        # Smallest param v$
@@ -392,6 +418,11 @@ if __name__ == "__main__":
     LOADIN_PL = "load" in sys.argv[4]
     OVERRIDE_EQUAL_MU = True
     LOG_PL = True
+
+    np.random.seed(420)
+    RANDOM_SAMPLE = True
+    NUM_POINTS = 1000000
+
 
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
@@ -433,7 +464,7 @@ if __name__ == "__main__":
                 print("{}: {}".format(param_names[i], minX[i]))
                 
             else:
-                print("{}: {} to {}".format(param_names[i], minX[i], maxX[i]))
+                print("{}: {} to {} {}".format(param_names[i], minX[i], maxX[i], "log" if do_log[i] else "linear"))
         
         print("Refinement levels:")
         for i in range(num_params):
@@ -460,6 +491,7 @@ if __name__ == "__main__":
             from probs import kernel_lnP
         else:
             print("No GPU detected - reverting to CPU simulation")
+            raise NotImplementedError
             num_SMs = -1
             from pvSim import pvSim
 
@@ -472,22 +504,29 @@ if __name__ == "__main__":
 
     import time
     clock0 = time.time()
-    N, P = bayes(pvSim, N, P, refs, minX, maxX, iniPar, simPar, minP, e_data)
+    N, P, X = bayes(pvSim, N, P, refs, minX, maxX, iniPar, simPar, minP, e_data)
     print("Bayesim took {} s".format(time.time() - clock0))
 
     minX /= unit_conversions
     maxX /= unit_conversions
+    X /= unit_conversions
     try:
         print("Writing to /blue:")
-        export_marginal_P(N, P, refs, minX, maxX, param_names)
-        export_magsum(P)
-        covar(N, P, refs, minX, maxX)
+        if RANDOM_SAMPLE:
+            export_random_marP(X, P)
+        else:
+            export_marginal_P(N, P, refs, minX, maxX, param_names)
+            export_magsum(P)
+            covar(N, P, refs, minX, maxX)
     except Exception as e:
         print(e)
         print("Write failed; rewriting to backup location /home:")
         wdir = r"/home/cfai2304/super_bayes/"
-        export_marginal_P(N, P, refs, minX, maxX, param_names)
-        export_magsum(P)
-        covar(N, P, refs, minX, maxX)
+        if RANDOM_SAMPLE:
+            export_random_marP(X, P)
+        else:
+            export_marginal_P(N, P, refs, minX, maxX, param_names)
+            export_magsum(P)
+            covar(N, P, refs, minX, maxX)
 
     maxP(N, P, refs, minX, maxX)

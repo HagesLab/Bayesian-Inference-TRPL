@@ -305,7 +305,6 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     Length, Time, L, T, plT, pT, tol, MAX = simPar
     dx = Length/L
     dt = Time/T
-    print("DT", dt)
     simPar = (L, T, tol, MAX, plT, *pT)
     gridPar = (BPG, *TPB)
     global SIZ 
