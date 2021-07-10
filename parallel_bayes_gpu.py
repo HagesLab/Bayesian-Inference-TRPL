@@ -57,9 +57,9 @@ def random_grid(minX, maxX, num_points, do_grid=False, refs=None):
                 grid[:,i] = np.random.choice(possible_vals, size=(len(grid[:,i],)))
             else:
                 if do_log[i]:
-                    grid[:,i] = 10 ** np.random.uniform(np.log10(minX[i]), np.log10(maxX[i]), (num_points,)))
+                    grid[:,i] = 10 ** np.random.uniform(np.log10(minX[i]), np.log10(maxX[i]), (num_points,))
                 else:
-                    grid[:,i] = np.random.uniform(minX[i], maxX[i], (num_points,)))
+                    grid[:,i] = np.random.uniform(minX[i], maxX[i], (num_points,))
             
     return grid
 
@@ -197,7 +197,7 @@ def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
 
     return N, P, X
 
-def simulate(model, nref, P, X, X_old, minus_err_sq, err_old, timepoints_per_ic, 
+def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_per_ic, num_curves,
              sim_params, init_params, T_FACTORS, gpu_id, num_gpus):
     try:
         cuda.select_device(gpu_id)
@@ -308,7 +308,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     T_FACTORS = np.geomspace(len(data[0]),1, 16)
     print("Temperatures: ", T_FACTORS)
 
-    N, P, X = make_grid(N, P, nref, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
+    N, P, X = make_grid(N, P, 0, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
     minus_err_sq = np.zeros(len(N))
     err_old = np.zeros_like(minus_err_sq)
     P_old = np.zeros_like(P)
@@ -321,8 +321,8 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
         threads = []
         for gpu_id in range(num_gpus):
             print("Starting thread {}".format(gpu_id))
-            thread = threading.Thread(target=simulate, args=(model, nref, P, X, X_old, minus_err_sq, err_old, accept,
-                                      timepoints_per_ic, sim_params, init_params, T_FACTORS, gpu_id, num_gpus))
+            thread = threading.Thread(target=simulate, args=(model, data, nref, P, X, X_old, minus_err_sq, err_old,
+                                      timepoints_per_ic, num_curves,sim_params, init_params, T_FACTORS, gpu_id, num_gpus))
             threads.append(thread)
             thread.start()
 
@@ -331,7 +331,11 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             thread.join()
             print("Thread {} closed".format(gpu_id))
 
+        np.save(r"/home/cfai2304/super_bayes/DEBUG.npy", P)
         select_accept(nref, P, P_old, minus_err_sq, err_old, X, X_old)
+
+        N, P, X = make_grid(N, P, nref+1, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
+        minus_err_sq = np.zeros(len(N))
 
     P = normalize(P)
     return N, P, X
@@ -418,7 +422,7 @@ if __name__ == "__main__":
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda]
     param_names = ["n0", "p0", "mun", "mup", "B", "Sf", "Sb", "taun", "taup", "lambda"]
     unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0])
-    do_log = np.array([1,1,0,0,0,1,1,0,0,0])
+    do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
     ref1 = np.array([1,10,1,10,10,10,1,10,10,1])
@@ -430,8 +434,8 @@ if __name__ == "__main__":
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     
 
-    minX = np.array([1e8, 1e13, 20, 1e-10, 1e-11, 1e-3, 10, 1, 1, 10**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 20, 100, 1e-10, 1e3, 10, 1000, 1000, 10**-1])
+    minX = np.array([1e8, 1e13, 20, 1e-10, 1e-12, 1e-3, 10, 1, 1, 10**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e17, 20, 100, 1e-8, 1e3, 10, 1000, 1000, 10**-1])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
     #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
     #minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
