@@ -363,15 +363,15 @@ def get_initpoints(init_file, scale_f=1e-21):
 if __name__ == "__main__":
     # simPar
     #Time    = 250                                 # Final time (ns)
-    Time    = 131867*0.025
-    #Time = 2000
+    #Time    = 131867*0.025
+    Time = 2000
     #Length = 2000
     Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
     #T   = 4000
-    T   = 131867                                # Time points
-    #T = 80000
+    #T   = 131867                                # Time points
+    T = 80000
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
@@ -421,7 +421,7 @@ if __name__ == "__main__":
 
     np.random.seed(420)
     RANDOM_SAMPLE = True
-    NUM_POINTS = 1000000
+    NUM_POINTS = 10000
 
 
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
