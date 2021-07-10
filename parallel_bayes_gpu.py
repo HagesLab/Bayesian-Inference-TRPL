@@ -192,10 +192,12 @@ def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
             #X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
             X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
     P = np.zeros((len(T_FACTORS), len(N),  len(mag_grid)))                               # Likelihoods
+    if OVERRIDE_EQUAL_MU:
+        X[:,2] = X[:,3]
 
     return N, P, X
 
-def simulate(model, P, ic_num, values, X, timepoints_per_ic, 
+def simulate(model, nref, P, X, X_old, minus_err_sq, err_old, timepoints_per_ic, 
              sim_params, init_params, T_FACTORS, gpu_id, num_gpus):
     try:
         cuda.select_device(gpu_id)
@@ -204,54 +206,80 @@ def simulate(model, P, ic_num, values, X, timepoints_per_ic,
         sys.exit()
     device = cuda.get_current_device()
     num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
+    for ic_num in range(num_curves):
+        times = data[0][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
+        values = data[1][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
+        std = data[2][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
+        assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
 
-    for blk in range(gpu_id*GPU_GROUP_SIZE,len(X),num_gpus*GPU_GROUP_SIZE):
-        size = min(GPU_GROUP_SIZE, len(X) - blk)
+        for blk in range(gpu_id*GPU_GROUP_SIZE,len(X),num_gpus*GPU_GROUP_SIZE):
+            size = min(GPU_GROUP_SIZE, len(X) - blk)
 
-        if not LOADIN_PL:
-            plI = np.empty((size, timepoints_per_ic), dtype=np.float32)
-            plN = np.empty((size, 2, sim_params[2]))
-            plP = np.empty((size, 2, sim_params[2]))
-            plE = np.empty((size, 2, sim_params[2]+1))
+            if not LOADIN_PL:
+                plI = np.empty((size, timepoints_per_ic), dtype=np.float32)
+                plN = np.empty((size, 2, sim_params[2]))
+                plP = np.empty((size, 2, sim_params[2]))
+                plE = np.empty((size, 2, sim_params[2]+1))
 
-            if has_GPU:
-                model(plI, plN, plP, 
-                      plE, X[blk:blk+size], sim_params, init_params[ic_num], 
-                      TPB,8*num_SMs, max_sims_per_block, init_mode=init_mode)
-            else:
-                plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
+                if has_GPU:
+                    model(plI, plN, plP, 
+                          plE, X[blk:blk+size], sim_params, init_params[ic_num], 
+                          TPB,8*num_SMs, max_sims_per_block, init_mode=init_mode)
+                else:
+                    plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
         
 
-            if LOG_PL:         
-                plI[plI<10*sys.float_info.min] = 10*sys.float_info.min
-                plI = np.log10(plI)
+                if LOG_PL:         
+                    plI[plI<10*sys.float_info.min] = 10*sys.float_info.min
+                    plI = np.log10(plI)
 
-            if "+" in sys.argv[4]:
+                if "+" in sys.argv[4]:
+                    try:
+                        np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk), plI)
+                        print("Saved plI of size ", plI.shape)
+                    except Exception as e:
+                        print("Warning: save failed\n", e)
+
+            else:
+                print("Loading plI group {}".format(blk))
                 try:
-                    np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk), plI)
-                    print("Saved plI of size ", plI.shape)
+                    plI = np.load("{}{}plI{}_grp{}.npy".format(wdir,out_filename, ic_num, blk))
+                    print("Loaded plI of size ", plI.shape)
                 except Exception as e:
-                    print("Warning: save failed\n", e)
-
-        else:
-            print("Loading plI group {}".format(blk))
-            try:
-                plI = np.load("{}{}plI{}_grp{}.npy".format(wdir,out_filename, ic_num, blk))
-                print("Loaded plI of size ", plI.shape)
-            except Exception as e:
-                print("Error: load failed\n", e)
-                sys.exit()
+                    print("Error: load failed\n", e)
+                    sys.exit()
 
 
-        # Calculate errors
-        v_dev = cuda.to_device(values)
-        m_dev = cuda.to_device(mag_grid)
-        plI_dev = cuda.to_device(plI)
-        for ti, tf in enumerate(T_FACTORS):
-            P_dev = cuda.to_device(np.zeros_like(P[ti, blk:blk+size]))
-            kernel_lnP[num_SMs, TPB](P_dev, plI_dev, v_dev, m_dev, bval_cutoff, tf)
-            cuda.synchronize()
-            P[ti, blk:blk+size] += P_dev.copy_to_host()
+            # Calculate errors
+            v_dev = cuda.to_device(values)
+            m_dev = cuda.to_device(mag_grid)
+            plI_dev = cuda.to_device(plI)
+            for ti, tf in enumerate(T_FACTORS):
+                P_dev = cuda.to_device(np.zeros_like(P[ti, blk:blk+size]))
+                kernel_lnP[num_SMs, TPB](P_dev, plI_dev, v_dev, m_dev, bval_cutoff, tf)
+                cuda.synchronize()
+                P[ti, blk:blk+size] += P_dev.copy_to_host()
+        # END LOOP OVER BLOCKS
+    # END LOOP OVER ICs
+
+    return
+
+def select_accept(nref,P, P_old, minus_err_sq, err_old, X, X_old):
+    # Evaluate acceptance criteria on the basis of squared errors - default temperature and zero mag offset
+    minus_err_sq = P[0, :, len(mag_grid) // 2]
+    if nref == 0:
+        accept = np.ones_like(minus_err_sq)
+
+    else:
+        # Less negative is more probable
+        accept = np.where(minus_err_sq > err_old, 1, 0)
+
+    print("Accept fraction: {}".format(np.sum(accept) / NUM_POINTS))
+    err_old = np.where(accept, minus_err_sq, err_old)
+    for x in np.where(accept)[0]:
+        X_old[x] = X[x]
+        P_old[:,x,:] = P[:,x,:]
+
     return
 
 def normalize(P):
@@ -280,35 +308,32 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     T_FACTORS = np.geomspace(len(data[0]),1, 16)
     print("Temperatures: ", T_FACTORS)
 
+    N, P, X = make_grid(N, P, nref, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
+    minus_err_sq = np.zeros(len(N))
+    err_old = np.zeros_like(minus_err_sq)
+    P_old = np.zeros_like(P)
+    X_old = np.zeros_like(X)
+    accept = np.zeros_like(minus_err_sq)
+
     for nref in range(len(refs)):                            # Loop refinements
 
-        N, P, X = make_grid(N, P, nref, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
+        num_gpus = 8
+        threads = []
+        for gpu_id in range(num_gpus):
+            print("Starting thread {}".format(gpu_id))
+            thread = threading.Thread(target=simulate, args=(model, nref, P, X, X_old, minus_err_sq, err_old, accept,
+                                      timepoints_per_ic, sim_params, init_params, T_FACTORS, gpu_id, num_gpus))
+            threads.append(thread)
+            thread.start()
 
-        if OVERRIDE_EQUAL_MU:
-            X[:,2] = X[:,3]
-        for ic_num in range(num_curves):
-            times = data[0][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
-            values = data[1][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
-            std = data[2][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
-            assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
+        for gpu_id, thread in enumerate(threads):
+            print("Ending thread {}".format(gpu_id))
+            thread.join()
+            print("Thread {} closed".format(gpu_id))
 
-            print("values", values)
+        select_accept(nref, P, P_old, minus_err_sq, err_old, X, X_old)
 
-            num_gpus = 8
-            threads = []
-            for gpu_id in range(num_gpus):
-                print("Starting thread {}".format(gpu_id))
-                thread = threading.Thread(target=simulate, args=(model, P, ic_num, values, X, 
-                                          timepoints_per_ic, sim_params, init_params, T_FACTORS, gpu_id, num_gpus))
-                threads.append(thread)
-                thread.start()
-
-            for gpu_id, thread in enumerate(threads):
-                print("Ending thread {}".format(gpu_id))
-                thread.join()
-                print("Thread {} closed".format(gpu_id))
-
-        P = normalize(P)
+    P = normalize(P)
     return N, P, X
 
 
@@ -422,7 +447,7 @@ if __name__ == "__main__":
 
     np.random.seed(420)
     RANDOM_SAMPLE = True
-    NUM_POINTS = 100000
+    NUM_POINTS = 10000
 
 
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
