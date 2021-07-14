@@ -28,6 +28,7 @@ def kernel_lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTOR):
             
             for i in range(num_observations):
                 err = plI[j,i] + mag_grid[m]
+                #err = max(err, cutoff)
                 if err < cutoff:
                     err = cutoff
 

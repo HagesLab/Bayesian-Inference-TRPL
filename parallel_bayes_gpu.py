@@ -198,7 +198,7 @@ def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
     return N, P, X
 
 def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_per_ic, num_curves,
-             sim_params, init_params, T_FACTORS, gpu_id, num_gpus):
+             sim_params, init_params, T_FACTORS, gpu_id, num_gpus, solver_time, err_sq_time):
     try:
         cuda.select_device(gpu_id)
     except IndexError:
@@ -222,9 +222,9 @@ def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_p
                 plE = np.empty((size, 2, sim_params[2]+1))
 
                 if has_GPU:
-                    model(plI, plN, plP, 
-                          plE, X[blk:blk+size], sim_params, init_params[ic_num], 
-                          TPB,8*num_SMs, max_sims_per_block, init_mode=init_mode)
+                    solver_time[gpu_id] += model(plI, plN, plP, plE, X[blk:blk+size], 
+                                                 sim_params, init_params[ic_num], 
+                                                 TPB,8*num_SMs, max_sims_per_block, init_mode=init_mode)
                 else:
                     plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
         
@@ -251,6 +251,7 @@ def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_p
 
 
             # Calculate errors
+            clock0 = time.time()
             v_dev = cuda.to_device(values)
             m_dev = cuda.to_device(mag_grid)
             plI_dev = cuda.to_device(plI)
@@ -259,6 +260,7 @@ def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_p
                 kernel_lnP[num_SMs, TPB](P_dev, plI_dev, v_dev, m_dev, bval_cutoff, tf)
                 cuda.synchronize()
                 P[ti, blk:blk+size] += P_dev.copy_to_host()
+            err_sq_time[gpu_id] += time.time() - clock0
         # END LOOP OVER BLOCKS
     # END LOOP OVER ICs
 
@@ -266,7 +268,7 @@ def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_p
 
 def select_accept(nref,P, P_old, minus_err_sq, err_old, X, X_old):
     # Evaluate acceptance criteria on the basis of squared errors - default temperature and zero mag offset
-    minus_err_sq = P[0, :, len(mag_grid) // 2]
+    minus_err_sq = P[-1, :, len(mag_grid) // 2]
     if nref == 0:
         accept = np.ones_like(minus_err_sq)
 
@@ -275,8 +277,9 @@ def select_accept(nref,P, P_old, minus_err_sq, err_old, X, X_old):
         accept = np.where(minus_err_sq > err_old, 1, 0)
 
     print("Accept fraction: {}".format(np.sum(accept) / NUM_POINTS))
-    err_old = np.where(accept, minus_err_sq, err_old)
+
     for x in np.where(accept)[0]:
+        err_old[x] = minus_err_sq[x]
         X_old[x] = X[x]
         P_old[:,x,:] = P[:,x,:]
 
@@ -300,6 +303,11 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     global init_mode
     global GPU_GROUP_SIZE
     global T_FACTORS
+    global num_gpus
+
+    solver_time = np.zeros(num_gpus)
+    err_sq_time = np.zeros(num_gpus)
+
     num_curves = len(init_params)
     timepoints_per_ic = sim_params[3] // sim_params[4] + 1
     print(timepoints_per_ic)
@@ -315,14 +323,14 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     X_old = np.zeros_like(X)
     accept = np.zeros_like(minus_err_sq)
 
-    for nref in range(len(refs)):                            # Loop refinements
+    for nref in range(mc_refs):                            # Loop refinements
 
-        num_gpus = 8
         threads = []
         for gpu_id in range(num_gpus):
             print("Starting thread {}".format(gpu_id))
             thread = threading.Thread(target=simulate, args=(model, data, nref, P, X, X_old, minus_err_sq, err_old,
-                                      timepoints_per_ic, num_curves,sim_params, init_params, T_FACTORS, gpu_id, num_gpus))
+                                      timepoints_per_ic, num_curves,sim_params, init_params, T_FACTORS, gpu_id, num_gpus,
+                                      solver_time, err_sq_time))
             threads.append(thread)
             thread.start()
 
@@ -331,14 +339,18 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             thread.join()
             print("Thread {} closed".format(gpu_id))
 
-        np.save(r"/home/cfai2304/super_bayes/DEBUG.npy", P)
         select_accept(nref, P, P_old, minus_err_sq, err_old, X, X_old)
 
+
         N, P, X = make_grid(N, P, nref+1, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
+        
         minus_err_sq = np.zeros(len(N))
 
-    P = normalize(P)
-    return N, P, X
+    P_old = normalize(P_old)
+
+    print("Total tEvol time: {}, avg {}".format(solver_time, np.mean(solver_time)))
+    print("Total err_sq time (temperatures and mag_offsets): {}, avg {}".format(err_sq_time, np.mean(err_sq_time)))
+    return N, P_old, X_old
 
 
 #-----------------------------------------------------------------------------#
@@ -346,6 +358,7 @@ import csv
 from numba import cuda
 import threading
 import sys
+import time
 def get_data(exp_file, scale_f=1, sample_f=1, noisy=False):
     with open(exp_file, newline='') as file:
         ifstream = csv.reader(file)
@@ -425,6 +438,8 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
+    num_gpus = 8
+
     ref1 = np.array([1,10,1,10,10,10,1,10,10,1])
     ref2 = np.array([1,24,1,1,24,24,1,24,24,1])
     ref3 = np.array([1,1,1,1,16,16,1,16,16,1])
@@ -432,10 +447,10 @@ if __name__ == "__main__":
     #ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
     ref5 = np.array([1,8,1,4,8,8,1,8,8,1])
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
-    
+    mc_refs = 1
 
-    minX = np.array([1e8, 1e13, 20, 1e-10, 1e-12, 1e-3, 10, 1, 1, 10**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 20, 100, 1e-8, 1e3, 10, 1000, 1000, 10**-1])
+    minX = np.array([1e8, 1e13, 20, 1e-10, 1e-13, 1e-3, 10, 1, 1, 10**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e3, 10, 1000, 1000, 10**-1])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
     #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
     #minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
@@ -451,8 +466,7 @@ if __name__ == "__main__":
 
     np.random.seed(420)
     RANDOM_SAMPLE = True
-    NUM_POINTS = 10000
-
+    NUM_POINTS = 2 ** 20
 
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
@@ -488,6 +502,7 @@ if __name__ == "__main__":
         # TODO: Additional checks involving refs
             
         print("Starting simulations with the following parameters:")
+        print("{} iterations".format(mc_refs))
         print("Equal mu override: {}".format(OVERRIDE_EQUAL_MU))
         for i in range(num_params):
             if minX[i] == maxX[i]:
@@ -496,9 +511,9 @@ if __name__ == "__main__":
             else:
                 print("{}: {} to {} {}".format(param_names[i], minX[i], maxX[i], "log" if do_log[i] else "linear"))
         
-        print("Refinement levels:")
-        for i in range(num_params):
-            print("{}: {}".format(param_names[i], refs[:,i]))        
+        #print("Refinement levels:")
+        #for i in range(num_params):
+        #    print("{}: {}".format(param_names[i], refs[:,i]))        
         e_data = get_data(experimental_data_filename, scale_f=scale_f, sample_f = sample_factor, noisy=data_is_noisy) 
         print("\nExperimental data - {}".format(experimental_data_filename))
         print("Data considered noisy: {}".format(data_is_noisy))
@@ -540,6 +555,7 @@ if __name__ == "__main__":
     minX /= unit_conversions
     maxX /= unit_conversions
     X /= unit_conversions
+    clock0 = time.time()
     try:
         print("Writing to /blue:")
         if RANDOM_SAMPLE:
@@ -560,3 +576,4 @@ if __name__ == "__main__":
             covar(N, P, refs, minX, maxX)
 
     maxP(N, P, refs, minX, maxX)
+    print("Export took {}".format(time.time() - clock0))

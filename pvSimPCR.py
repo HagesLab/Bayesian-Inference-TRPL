@@ -362,19 +362,20 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     devm = cuda.to_device(matPar)
     devs = cuda.to_device(simPar)
     devg = cuda.to_device(gridPar)
-    #print("Loading data took {} sec".format(time.time() - clock0))
+    print("Loading data took {} sec".format(time.time() - clock0))
     race = np.zeros(1)
     drace = cuda.to_device(race)
     clock0 = time.time()
     tEvol[BPG,TPB](devN, devP, devE, devpN, devpP, devpE, devpI, devm, devs, devg, drace)
     cuda.synchronize()
-    print("tEvol took {} sec".format(time.time() - clock0))
+    solver_time = time.time() - clock0
+    print("tEvol took {} sec".format(solver_time))
     clock0 = time.time()
     plI_main[:] = devpI.copy_to_host()
     plN_main[:] = devpN.copy_to_host()
     plP_main[:] = devpP.copy_to_host()
     plE_main[:] = devpE.copy_to_host()
-    #print("Copy back took {} sec".format(time.time() - clock0))
+    print("Copy back took {} sec".format(time.time() - clock0))
     #race = drace.copy_to_host()
     #print(race)
 
@@ -387,7 +388,7 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     #print(list(np.sum(plI_main, axis=1)))
     #print("plN", plN_main)
     #print("plP", plP_main)
-    return
+    return solver_time
 
 if __name__ == "__main__":
 
