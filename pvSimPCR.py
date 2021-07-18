@@ -119,6 +119,7 @@ def iterate(N, P, E, matPar, par, p, t):
     buffer = cuda.shared.array(shape=(BuSIZ, MSPB), dtype=floatY)
     errN = cuda.shared.array(shape=(MSPB), dtype=floatY)
     errP = cuda.shared.array(shape=(MSPB), dtype=floatY)
+
     th = cuda.threadIdx.x                      # Set thread ID
     for n in range(th, L, TPB):
         for y in range(num_sims):
@@ -267,9 +268,9 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
                 
             if t%plT == 0:
                 for y in range(p, p_lim):
-                    Sum = 0
+                    Sum = -L * (N0[y]*P0[y])
                     for n in range(L):
-                        Sum += N[y,k,n]*P[y,k,n]-N0[y]*P0[y]
+                        Sum += N[y,k,n]*P[y,k,n]
                     plI[y,t//plT] = rate[y]*Sum
 
             # Record specified timesteps, for debug mode
@@ -285,17 +286,17 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
         cuda.syncthreads()
 
     # Record last two timesteps
-    th = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
-    for p in range(th,len(N), cuda.gridsize(1)):
-        for n in range(len(N[0,0])):
-            plN[p,1,n] = N[p,kp,n]
-            plN[p,0,n] = N[p,k,n] 
-            plP[p,1,n] = P[p,kp,n]
-            plP[p,0,n] = P[p,k,n]
+    #th = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+    #for p in range(th,len(N), cuda.gridsize(1)):
+    #    for n in range(len(N[0,0])):
+    #        plN[p,1,n] = N[p,kp,n]
+    #        plN[p,0,n] = N[p,k,n] 
+    #        plP[p,1,n] = P[p,kp,n]
+    #        plP[p,0,n] = P[p,k,n]
 
-        for n in range(len(E[0,0])):
-            plE[p,1,n] = E[p,kp,n]
-            plE[p,0,n] = E[p,k,n]
+    #    for n in range(len(E[0,0])):
+    #        plE[p,1,n] = E[p,kp,n]
+    #        plE[p,0,n] = E[p,k,n]
           
 
 def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init_mode="exp"):
@@ -372,18 +373,18 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     print("tEvol took {} sec".format(solver_time))
     clock0 = time.time()
     plI_main[:] = devpI.copy_to_host()
-    plN_main[:] = devpN.copy_to_host()
-    plP_main[:] = devpP.copy_to_host()
-    plE_main[:] = devpE.copy_to_host()
+    #plN_main[:] = devpN.copy_to_host()
+    #plP_main[:] = devpP.copy_to_host()
+    #plE_main[:] = devpE.copy_to_host()
     print("Copy back took {} sec".format(time.time() - clock0))
     #race = drace.copy_to_host()
     #print(race)
 
     # Re-dimensionalize
     plI_main /= dx**2*dt
-    plN_main /= dx**3
-    plP_main /= dx**3
-    plE_main /= dx
+    #plN_main /= dx**3
+    #plP_main /= dx**3
+    #plE_main /= dx
     #print(plI_main[:,0:6])
     #print(list(np.sum(plI_main, axis=1)))
     #print("plN", plN_main)

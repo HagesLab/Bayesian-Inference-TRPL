@@ -64,6 +64,32 @@ def prob(P, plI, values, mag_grid, bval_cutoff, T_FACTORS, TPB, BPG):
 
     return time.time() - clock0
 
+@cuda.jit(device=False)
+def log_kernel(plI, MIN, TPB, BPG):
+    blk = cuda.blockIdx.x
+    thr = cuda.threadIdx.x
+
+    for i in range(blk, num_paramsets, BPG):
+        for j in range(thr, num_observations, TPB):
+            if plI[i,j] < MIN:
+                plI[i,j] = MIN
+
+            plI[i,j] = math.log10(plI[i,j])
+
+
+def fastlog(plI, MIN, TPB, BPG):
+    global num_paramsets
+    global num_observations
+    num_observations = len(plI[0])
+    num_paramsets = len(plI)
+    clock0 = time.time()
+    plI_dev = cuda.to_device(plI)
+    log_kernel[BPG, TPB](plI_dev, MIN, TPB, BPG)
+    cuda.synchronize()
+    plI[:] = plI_dev.copy_to_host()
+
+    return time.time() - clock0
+
 if __name__ == "__main__":
     tests = 10
     num_obs = 1000

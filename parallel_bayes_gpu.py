@@ -198,7 +198,7 @@ def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
     return N, P, X
 
 def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_per_ic, num_curves,
-             sim_params, init_params, T_FACTORS, gpu_id, num_gpus, solver_time, err_sq_time):
+             sim_params, init_params, T_FACTORS, gpu_id, num_gpus, solver_time, err_sq_time, misc_time):
     try:
         cuda.select_device(gpu_id)
     except IndexError:
@@ -229,9 +229,10 @@ def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_p
                     plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
         
 
-                if LOG_PL:         
-                    plI[plI<10*sys.float_info.min] = 10*sys.float_info.min
-                    plI = np.log10(plI)
+                if LOG_PL:
+                    #plI[plI<10*sys.float_info.min] = 10*sys.float_info.min
+                    #plI = np.log10(plI)
+                    misc_time[gpu_id] += fastlog(plI, 10*sys.float_info.min, TPB[0], num_SMs)
 
                 if "+" in sys.argv[4]:
                     try:
@@ -298,6 +299,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 
     solver_time = np.zeros(num_gpus)
     err_sq_time = np.zeros(num_gpus)
+    misc_time = np.zeros(num_gpus)
 
     num_curves = len(init_params)
     timepoints_per_ic = sim_params[3] // sim_params[4] + 1
@@ -321,7 +323,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             print("Starting thread {}".format(gpu_id))
             thread = threading.Thread(target=simulate, args=(model, data, nref, P, X, X_old, minus_err_sq, err_old,
                                       timepoints_per_ic, num_curves,sim_params, init_params, T_FACTORS, gpu_id, num_gpus,
-                                      solver_time, err_sq_time))
+                                      solver_time, err_sq_time, misc_time))
             threads.append(thread)
             thread.start()
 
@@ -341,6 +343,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 
     print("Total tEvol time: {}, avg {}".format(solver_time, np.mean(solver_time)))
     print("Total err_sq time (temperatures and mag_offsets): {}, avg {}".format(err_sq_time, np.mean(err_sq_time)))
+    print("Total misc time: {}, avg {}".format(misc_time, np.mean(misc_time)))
     return N, P_old, X_old
 
 
@@ -524,7 +527,7 @@ if __name__ == "__main__":
             TPB = (2 ** 7,)
             max_sims_per_block = 3           # Maximum of 6 due to shared memory limit
             from pvSimPCR import pvSim
-            from probs import prob
+            from probs import prob, fastlog
         else:
             print("No GPU detected - reverting to CPU simulation")
             raise NotImplementedError
