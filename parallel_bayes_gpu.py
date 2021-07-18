@@ -251,16 +251,7 @@ def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_p
 
 
             # Calculate errors
-            clock0 = time.time()
-            v_dev = cuda.to_device(values)
-            m_dev = cuda.to_device(mag_grid)
-            plI_dev = cuda.to_device(plI)
-            for ti, tf in enumerate(T_FACTORS):
-                P_dev = cuda.to_device(np.zeros_like(P[ti, blk:blk+size]))
-                kernel_lnP[num_SMs, TPB](P_dev, plI_dev, v_dev, m_dev, bval_cutoff, tf)
-                cuda.synchronize()
-                P[ti, blk:blk+size] += P_dev.copy_to_host()
-            err_sq_time[gpu_id] += time.time() - clock0
+            err_sq_time[gpu_id] += prob(P[:, blk:blk+size], plI, values, mag_grid, bval_cutoff, T_FACTORS, TPB[0], num_SMs)
         # END LOOP OVER BLOCKS
     # END LOOP OVER ICs
 
@@ -449,8 +440,8 @@ if __name__ == "__main__":
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     mc_refs = 1
 
-    minX = np.array([1e8, 1e13, 20, 1e-10, 1e-13, 1e-3, 10, 1, 1, 10**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e17, 20, 100, 1e-9, 1e3, 10, 1000, 1000, 10**-1])
+    minX = np.array([1e8, 1e8, 20, 1e-10, 1e-11, 1e-6, 10, 1, 1, 10**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e18, 20, 1000, 1e-9, 5e2, 10, 1500, 1500, 10**-1])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
     #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
     #minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
@@ -477,9 +468,9 @@ if __name__ == "__main__":
     N    = np.array([0])                              # Initial N
     P    = None                            # Initial P
 
-    wdir = r"/blue/c.hages/cfai2304/"
     experimental_data_filename = sys.argv[1]
     out_filename = sys.argv[3]
+    wdir = r"/blue/c.hages/cfai2304/{}/".format(out_filename)
     
     # Pre-checks
     try:
@@ -533,7 +524,7 @@ if __name__ == "__main__":
             TPB = (2 ** 7,)
             max_sims_per_block = 3           # Maximum of 6 due to shared memory limit
             from pvSimPCR import pvSim
-            from probs import kernel_lnP
+            from probs import prob
         else:
             print("No GPU detected - reverting to CPU simulation")
             raise NotImplementedError
@@ -555,6 +546,17 @@ if __name__ == "__main__":
     minX /= unit_conversions
     maxX /= unit_conversions
     X /= unit_conversions
+    #np.save("{}_BAYRAN_P.npy".format(wdir + out_filename), P)
+    #np.save("{}_BAYRAN_X.npy".format(wdir + out_filename), X)
+
+
+    try:
+        import os
+        print("Creating dir {}".format(out_filename))
+        os.mkdir(wdir)
+    except FileExistsError:
+        print("{} dir already exists".format(out_filename))
+
     clock0 = time.time()
     try:
         print("Writing to /blue:")

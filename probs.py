@@ -1,6 +1,7 @@
-from numba import cuda
+from numba import cuda, float64
 import numpy as np
 import math
+import time
 def lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTOR):
     for m, mag in enumerate(mag_grid):
         err = plI + mag
@@ -17,30 +18,51 @@ def lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTOR):
     return
 
 @cuda.jit(device=False)
-def kernel_lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTOR):
+def kernel_lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTORS):
     cutoff = math.log10(bval_cutoff)
-    num_observations = len(values)
-    num_paramsets = len(plI)
-    sig_sq = T_FACTOR
+    err_arr = cuda.shared.array(shape=(shared_array_size,), dtype=float64)
     thr = cuda.grid(1)
-    for m in range(len(mag_grid)):
-        for j in range(thr, num_paramsets, cuda.gridsize(1)):
-            
-            for i in range(num_observations):
-                err = plI[j,i] + mag_grid[m]
-                #err = max(err, cutoff)
-                if err < cutoff:
-                    err = cutoff
+    thr2 = cuda.threadIdx.x
+    for ti in range(len(T_FACTORS)):
+        sig_sq = T_FACTORS[ti]
+        for m in range(len(mag_grid)):
+            for j in range(thr, num_paramsets, cuda.gridsize(1)):
+                err_arr[thr2] = 0
 
-                err -= values[i]
+                for i in range(num_observations):
+                    err = plI[j,i] + mag_grid[m]
+                    if err < cutoff:
+                        err = cutoff
 
-                err = err ** 2
+                    err -= values[i]
 
-                P[j,m] -= err
-            P[j,m] /= sig_sq
-            P[j,m] -= math.log(math.pi*sig_sq)/2 * num_observations
+                    err = err ** 2
+                    err_arr[thr2] += err
+
+
+                P[ti,j,m] -= err_arr[thr2]
+                P[ti,j,m] /= sig_sq
+                #P[ti,j,m] -= math.log(math.pi*sig_sq)/2 * num_observations
 
     return
+
+def prob(P, plI, values, mag_grid, bval_cutoff, T_FACTORS, TPB, BPG):
+    global num_paramsets
+    global num_observations
+    global shared_array_size
+    clock0 = time.time()
+    num_observations = len(values)
+    num_paramsets = len(plI)
+    shared_array_size = int(TPB)
+    v_dev = cuda.to_device(values)
+    m_dev = cuda.to_device(mag_grid)
+    plI_dev = cuda.to_device(plI)
+    P_dev = cuda.to_device(np.zeros_like(P))
+    kernel_lnP[BPG, TPB](P_dev, plI_dev, v_dev, m_dev, bval_cutoff, T_FACTORS)
+    cuda.synchronize()
+    P += P_dev.copy_to_host()
+
+    return time.time() - clock0
 
 if __name__ == "__main__":
     tests = 10
