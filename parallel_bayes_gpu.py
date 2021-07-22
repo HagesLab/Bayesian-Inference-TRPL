@@ -63,101 +63,17 @@ def random_grid(minX, maxX, num_points, do_grid=False, refs=None):
             
     return grid
 
-def maxP(N,P,refs, minX, maxX):
-    pN = np.prod(refs, axis=0)
-    ind = indexGrid(N,refs)
-    X = paramGrid(ind, refs, minX, maxX)
+def maxP(N,P,X, refs, minX, maxX):
+    if not RANDOM_SAMPLE:
+        pN = np.prod(refs, axis=0)
+        ind = indexGrid(N,refs)
+        X = paramGrid(ind, refs, minX, maxX)
     for ti, tf in enumerate(T_FACTORS):
         print("Temperature:", tf)
         wheremax = np.unravel_index(np.argmax(P[ti], axis=None), P[ti].shape)
         print(X[wheremax[0]])
         print("Mag_offset: ", mag_grid[wheremax[1]])
         print("P = {}".format(np.max(P[ti])))
-
-def covar(N,P,refs, minX, maxX):
-    global param_names
-    pN   = np.prod(refs, axis=0)
-    ind  = indexGrid(N, refs)
-    iterables = np.where(pN > 1)[0]
-    for q in range(len(iterables)):
-        pID_1 = iterables[q]
-        m = pID_1
-        im = np.array([*range(pN[m])]) + 0.5                 # Coords
-        X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-        X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
-        X = X1 * (1 - do_log[m]) + X2 * do_log[m]
-        x_unique = np.unique(ind[:, pID_1])
-
-        for r in range(q):
-            pID_2 = iterables[r]
-            m = pID_2
-            im = np.array([*range(pN[m])]) + 0.5                 # Coords
-            X1   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-            X2   = minX[m] * (maxX[m]/minX[m])**(im/pN[m])
-            Y = np.append(np.array([-1]), (X1 * (1 - do_log[m]) + X2 * do_log[m]), axis=0)
-            y_unique = np.unique(ind[:, pID_2])
-
-            cov_P = np.zeros((pN[pID_1], pN[pID_2]))
-            cov_P = np.hstack((X.reshape((len(X),1)), cov_P))
-            cov_P = np.vstack((Y.reshape((1, len(Y))), cov_P))
-
-            print("Writing covariance file {} and {}".format(param_names[pID_1], param_names[pID_2]))
-            
-            for ti, tf in enumerate(T_FACTORS):
-                Pti = P[ti]
-                # Find all N where param 1 is i and param 2 is j
-                # Since sum() is optimized this is better than a linear scan and tally over P
-                for i in x_unique:
-                    where_xi = ind[:,pID_1] == i
-                    for j in y_unique:
-                        cov_P[i+1,j+1] = Pti[np.where(np.logical_and(where_xi, ind[:,pID_2] == j))].sum()
-            
-                np.save("{}_BAYRES_{}_{}-{}.npy".format(wdir + out_filename, int(tf), param_names[pID_1], param_names[pID_2]), cov_P)
-
-        if len(mag_grid) > 1:
-            Y = np.append(np.array([-1]), mag_grid, axis=0)
-
-            cov_P = np.zeros((pN[pID_1], len(mag_grid)))
-            cov_P = np.hstack((X.reshape((len(X), 1)), cov_P))
-            cov_P = np.vstack((Y.reshape((1, len(Y))), cov_P))
-
-            print("Writing covariance file {} and mag_offset".format(param_names[pID_1]))
-            for ti, tf in enumerate(T_FACTORS):
-                Pti = P[ti]
-                for i in x_unique:
-                    cov_P[i+1,1:] = np.sum(Pti[np.where(ind[:, pID_1] == i)], axis=0)
-
-                np.save("{}_BAYRES_{}_{}-magoffset.npy".format(wdir + out_filename,int(tf), param_names[pID_1]), cov_P)
-    return
-        
-def export_marginal_P(N, P, refs, minX, maxX, param_names):
-    pN   = np.prod(refs, axis=0)
-    ind  = indexGrid(N, refs)
-    for m in np.where(pN > 1)[0]:
-        print("Writing marginal {} file".format(param_names[m]))
-        im = np.array([*range(pN[m])]) + 0.5                 # Coords
-        #X = minX[m] + (maxX[m]-minX[m])*im/pN[m]             # Param values
-        X_lin   = minX[m] + (maxX[m]-minX[m])*(im)/pN[m]    # Get params
-        X_log = minX[m] * (maxX[m]/minX[m])**((im)/pN[m])
-        X =  X_lin * (1-do_log[m]) + X_log * do_log[m]
-
-        marP = np.zeros(pN[m])
-        marP = np.vstack((X, marP)).T
-        for ti, tf in enumerate(T_FACTORS):
-            print("Temperature:", tf)
-            for n in np.unique(ind[:,m]):                        # Loop over coord
-                marP[n, 1] = P[ti,np.where(ind[:,m] == n)].sum()
-
-            print(marP)
-            np.savetxt("{}_BAYRES_{}_{}.csv".format(wdir + out_filename, int(tf), param_names[m]), marP, delimiter=",")
-    return        
-
-def export_magsum(P):
-    if len(mag_grid) > 1:
-        for ti, tf in enumerate(T_FACTORS):
-            sum_by_mag = np.sum(P[ti], axis=0)
-            np.savetxt("{}_BAYRES_{}_magoffset.csv".format(wdir + out_filename, int(tf)), np.vstack((mag_grid, sum_by_mag)).T, delimiter=",")
-    return
 
 def export_random_marP(X, P):
     P_over_mags = np.sum(P, axis=2)
@@ -303,10 +219,9 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 
     num_curves = len(init_params)
     timepoints_per_ic = sim_params[3] // sim_params[4] + 1
-    print(timepoints_per_ic)
-    print(len(data[0]))
     assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
-    T_FACTORS = np.geomspace(len(data[0]),1, 16)
+    #T_FACTORS = np.geomspace(len(data[0]),1, 16)
+    T_FACTORS = np.array([100])
     print("Temperatures: ", T_FACTORS)
 
     N, P, X = make_grid(N, P, 0, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
@@ -335,7 +250,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
         select_accept(nref, P, P_old, minus_err_sq, err_old, X, X_old)
 
 
-        N, P, X = make_grid(N, P, nref+1, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
+        #N, P, X = make_grid(N, P, nref+1, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
         
         minus_err_sq = np.zeros(len(N))
 
@@ -400,14 +315,12 @@ def get_initpoints(init_file, scale_f=1e-21):
 if __name__ == "__main__":
     # simPar
     #Time    = 250                                 # Final time (ns)
-    #Time    = 131867*0.025
     Time = 2000
     #Length = 2000
     Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
     #T   = 4000
-    #T   = 131867                                # Time points
     T = 80000
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
@@ -432,9 +345,9 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    num_gpus = 8
+    num_gpus = 2
 
-    ref1 = np.array([1,10,1,10,10,10,1,10,10,1])
+    ref1 = np.array([1,1,1,128,128,1,1,1,1,1])
     ref2 = np.array([1,24,1,1,24,24,1,24,24,1])
     ref3 = np.array([1,1,1,1,16,16,1,16,16,1])
     ref4 = np.array([1,1,1,1,1,1,1,32,1,1])
@@ -443,24 +356,24 @@ if __name__ == "__main__":
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     mc_refs = 1
 
-    minX = np.array([1e8, 1e8, 20, 1e-10, 1e-11, 1e-6, 10, 1, 1, 10**-1])                        # Smallest param v$
-    maxX = np.array([1e8, 1e18, 20, 1000, 1e-9, 5e2, 10, 1500, 1500, 10**-1])
+    #minX = np.array([1e8, 1e8, 20, 1e-10, 1e-11, 1e-6, 10, 1, 1, 10**-1])                        # Smallest param v$
+    #maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 5e2, 10, 1500, 1500, 10**-1])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
     #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
-    #minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1, 871, 10**-1])
-    #maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 10, 10, 1000, 871, 10**-1])
+    minX = np.array([1e8, 3e15, 20,1e-10, 1e-11, 10, 10, 511, 871, 10**-1])
+    maxX = np.array([1e8, 3e15, 20,100, 1e-9, 10, 10, 511, 871, 10**-1])
     mag_scale = (-1,1)
     mag_points = 31
     mag_grid = np.linspace(mag_scale[0], mag_scale[1], mag_points)
-    #mag_grid = [0]
+    mag_grid = [0]
 
     LOADIN_PL = "load" in sys.argv[4]
     OVERRIDE_EQUAL_MU = True
     LOG_PL = True
 
     np.random.seed(420)
-    RANDOM_SAMPLE = True
-    NUM_POINTS = 2 ** 20
+    RANDOM_SAMPLE = False
+    NUM_POINTS = 2 ** 23
 
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
@@ -488,11 +401,12 @@ if __name__ == "__main__":
             for ref in refs:
                 assert ref[2] == 1, "Equal mu override is on but mu_n is being subdivided"
 
-        for i in range(len(refs[0])):
-            if not refs[0,i] == 1:
-                assert not (minX[i] == maxX[i]), "{} is subdivided but min val == max val".format(param_names[i])
-            else:
-                assert (minX[i] == maxX[i]), "{} is not subdivided but min val != max val".format(param_names[i])
+        if not RANDOM_SAMPLE:
+            for i in range(len(refs[0])):
+                if not refs[0,i] == 1:
+                    assert not (minX[i] == maxX[i]), "{} is subdivided but min val == max val".format(param_names[i])
+                else:
+                    assert (minX[i] == maxX[i]), "{} is not subdivided but min val != max val".format(param_names[i])
         # TODO: Additional checks involving refs
             
         print("Starting simulations with the following parameters:")
@@ -504,10 +418,10 @@ if __name__ == "__main__":
                 
             else:
                 print("{}: {} to {} {}".format(param_names[i], minX[i], maxX[i], "log" if do_log[i] else "linear"))
-        
-        #print("Refinement levels:")
-        #for i in range(num_params):
-        #    print("{}: {}".format(param_names[i], refs[:,i]))        
+        if not RANDOM_SAMPLE:
+            print("Refinement levels:")
+            for i in range(num_params):
+                print("{}: {}".format(param_names[i], refs[:,i]))        
         e_data = get_data(experimental_data_filename, scale_f=scale_f, sample_f = sample_factor, noisy=data_is_noisy) 
         print("\nExperimental data - {}".format(experimental_data_filename))
         print("Data considered noisy: {}".format(data_is_noisy))
@@ -549,9 +463,6 @@ if __name__ == "__main__":
     minX /= unit_conversions
     maxX /= unit_conversions
     X /= unit_conversions
-    #np.save("{}_BAYRAN_P.npy".format(wdir + out_filename), P)
-    #np.save("{}_BAYRAN_X.npy".format(wdir + out_filename), X)
-
 
     try:
         import os
@@ -559,6 +470,8 @@ if __name__ == "__main__":
         os.mkdir(wdir)
     except FileExistsError:
         print("{} dir already exists".format(out_filename))
+    #np.save("{}_BAYRAN_P.npy".format(wdir + out_filename), P)
+    #np.save("{}_BAYRAN_X.npy".format(wdir + out_filename), X)
 
     clock0 = time.time()
     try:
@@ -566,9 +479,7 @@ if __name__ == "__main__":
         if RANDOM_SAMPLE:
             export_random_marP(X, P)
         else:
-            export_marginal_P(N, P, refs, minX, maxX, param_names)
-            export_magsum(P)
-            covar(N, P, refs, minX, maxX)
+            export_random_marP(X,P)
     except Exception as e:
         print(e)
         print("Write failed; rewriting to backup location /home:")
@@ -576,9 +487,7 @@ if __name__ == "__main__":
         if RANDOM_SAMPLE:
             export_random_marP(X, P)
         else:
-            export_marginal_P(N, P, refs, minX, maxX, param_names)
-            export_magsum(P)
-            covar(N, P, refs, minX, maxX)
+            export_random_marP(X, P)
 
-    maxP(N, P, refs, minX, maxX)
+    maxP(N, P, X, refs, minX, maxX)
     print("Export took {}".format(time.time() - clock0))
