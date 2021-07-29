@@ -74,15 +74,38 @@ def maxP(N,P,X, refs, minX, maxX):
         print(X[wheremax[0]])
         print("Mag_offset: ", mag_grid[wheremax[1]])
         print("P = {}".format(np.max(P[ti])))
+    np.save("{}_BAYRAN_MAX.npy".format(wdir + out_filename), np.append(X[wheremax[0]], mag_grid[wheremax[1]]))
 
-def export_random_marP(X, P):
+def export_random_marP(X, P, mag_grid):
+    np.save("{}_BAYRAN_X.npy".format(wdir + out_filename), X)
+    if len(mag_grid) > 1:
+        np.save("{}_BAYRAN_MAGS.npy".format(wdir + out_filename), mag_grid)
+        bin_ctx = 48
+        bin_cty = len(mag_grid)
+        bx = np.arange(bin_ctx+1)
+        by = np.arange(bin_cty+1)
+        if do_log[4]:
+            bx = minX[4] * (maxX[4]/minX[4])**((bx)/bin_ctx)
+                            
+        else:
+            bx = minX[4] + (maxX[4]-minX[4])*(bx)/bin_ctx    # Get params
+
+        by = mag_grid[0] + (mag_grid[-1]-mag_grid[0])*(by)/bin_cty
+
     P_over_mags = np.sum(P, axis=2)
+    #P_over_mags = P[:, :, len(mag_grid) // 2]
     for ti, tf in enumerate(T_FACTORS):
         Pti = P_over_mags[ti]
-        np.save("{}_BAYRAN_{}.npy".format(wdir + out_filename, int(tf)), np.hstack((X, Pti.reshape((len(Pti), 1)))))
+        np.save("{}_BAYRAN_{}.npy".format(wdir + out_filename, int(tf)), Pti)
+
+        # Only need B-mag_offset covariance
         if len(mag_grid) > 1:
-            sum_by_mag = np.sum(P[ti], axis=0)
-            np.save("{}_BAYRAN_{}_mag_offset.npy".format(wdir + out_filename, int(tf)), np.vstack((mag_grid, sum_by_mag)).T)
+            Pti = P[ti].flatten(order='F')
+            Bm = np.tile(X[:, 4], len(mag_grid))
+            m = np.repeat(mag_grid, len(X))
+            h, bx, by = np.histogram2d(Bm, m, bins=[bx, by], weights=Pti)
+            np.save("{}_BAYRAN_BMO_{}.npy".format(wdir + out_filename, int(tf)), h)
+            np.save("{}_BAYRAN_MAG_{}.npy".format(wdir + out_filename, int(tf)), np.sum(P[ti], axis=0))
     return
 
 def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
@@ -220,8 +243,8 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     num_curves = len(init_params)
     timepoints_per_ic = sim_params[3] // sim_params[4] + 1
     assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
-    #T_FACTORS = np.geomspace(len(data[0]),1, 16)
-    T_FACTORS = np.array([100])
+    T_FACTORS = np.geomspace(len(data[0]) / 10, 10, 8)
+    #T_FACTORS = np.array([100])
     print("Temperatures: ", T_FACTORS)
 
     N, P, X = make_grid(N, P, 0, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
@@ -345,7 +368,7 @@ if __name__ == "__main__":
     do_log = np.array([1,1,0,0,1,1,1,0,0,0])
 
     GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    num_gpus = 2
+    num_gpus = 8
 
     ref1 = np.array([1,1,1,128,128,1,1,1,1,1])
     ref2 = np.array([1,24,1,1,24,24,1,24,24,1])
@@ -356,23 +379,23 @@ if __name__ == "__main__":
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     mc_refs = 1
 
-    #minX = np.array([1e8, 1e8, 20, 1e-10, 1e-11, 1e-6, 10, 1, 1, 10**-1])                        # Smallest param v$
-    #maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 5e2, 10, 1500, 1500, 10**-1])
+    minX = np.array([1e8, 1e8, 20, 1e-10, 4.8e-11, 1e-6, 10, 1, 1, 10**-1])                        # Smallest param v$
+    maxX = np.array([1e8, 1e18, 20, 100, 4.8e-11, 5e2, 10, 1500, 1500, 10**-1])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
     #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
-    minX = np.array([1e8, 3e15, 20,1e-10, 1e-11, 10, 10, 511, 871, 10**-1])
-    maxX = np.array([1e8, 3e15, 20,100, 1e-9, 10, 10, 511, 871, 10**-1])
+    #minX = np.array([1e8, 3e15, 20,20, 1e-11, 1e-6, 10, 511, 871, 10**-1])
+    #maxX = np.array([1e8, 3e15, 20,20, 1e-9, 5e2, 10, 511, 871, 10**-1])
     mag_scale = (-1,1)
     mag_points = 31
     mag_grid = np.linspace(mag_scale[0], mag_scale[1], mag_points)
-    mag_grid = [0]
+    #mag_grid = [0]
 
     LOADIN_PL = "load" in sys.argv[4]
     OVERRIDE_EQUAL_MU = True
     LOG_PL = True
 
     np.random.seed(420)
-    RANDOM_SAMPLE = False
+    RANDOM_SAMPLE = True
     NUM_POINTS = 2 ** 23
 
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
@@ -476,18 +499,12 @@ if __name__ == "__main__":
     clock0 = time.time()
     try:
         print("Writing to /blue:")
-        if RANDOM_SAMPLE:
-            export_random_marP(X, P)
-        else:
-            export_random_marP(X,P)
+        export_random_marP(X, P, mag_grid)
     except Exception as e:
         print(e)
         print("Write failed; rewriting to backup location /home:")
         wdir = r"/home/cfai2304/super_bayes/"
-        if RANDOM_SAMPLE:
-            export_random_marP(X, P)
-        else:
-            export_random_marP(X, P)
+        export_random_marP(X, P)
 
     maxP(N, P, X, refs, minX, maxX)
     print("Export took {}".format(time.time() - clock0))
