@@ -18,7 +18,7 @@ def lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTOR):
     return
 
 @cuda.jit(device=False)
-def kernel_lnP(P, plI, values, uncertainty, mag_grid, bval_cutoff, T_FACTORS):
+def kernel_lnP(P, plI, values, uncertainty, mag_grid, T_FACTORS):
     #cutoff = math.log10(bval_cutoff)
     err_arr = cuda.shared.array(shape=(shared_array_size,), dtype=float64)
     thr = cuda.grid(1)
@@ -46,7 +46,7 @@ def kernel_lnP(P, plI, values, uncertainty, mag_grid, bval_cutoff, T_FACTORS):
 
     return
 
-def prob(P, plI, values, uncertainty, mag_grid, bval_cutoff, T_FACTORS, TPB, BPG):
+def prob(P, plI, values, uncertainty, mag_grid, T_FACTORS, TPB, BPG):
     global num_paramsets
     global num_observations
     global shared_array_size
@@ -59,7 +59,7 @@ def prob(P, plI, values, uncertainty, mag_grid, bval_cutoff, T_FACTORS, TPB, BPG
     m_dev = cuda.to_device(mag_grid)
     plI_dev = cuda.to_device(plI)
     P_dev = cuda.to_device(np.zeros_like(P))
-    kernel_lnP[BPG, TPB](P_dev, plI_dev, v_dev, u_dev, m_dev, bval_cutoff, T_FACTORS)
+    kernel_lnP[BPG, TPB](P_dev, plI_dev, v_dev, u_dev, m_dev, T_FACTORS)
     cuda.synchronize()
     P += P_dev.copy_to_host()
 

@@ -73,7 +73,7 @@ def maxP(N,P,X, refs, minX, maxX):
         wheremax = np.argmax(P[ti])
         print(X[wheremax])
         print("P = {}".format(P[ti, wheremax]))
-    np.save("{}_BAYRAN_MAX.npy".format(wdir + out_filename), X[wheremax])
+    #np.save("{}_BAYRAN_MAX.npy".format(wdir + out_filename), X[wheremax])
 
 def export_random_marP(X, P):
     np.save("{}_BAYRAN_X.npy".format(wdir + out_filename), X)
@@ -150,9 +150,7 @@ def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_p
                     plI /= plI[0]
                     plI = plI.T
                 if LOG_PL:
-                    #plI[plI<10*sys.float_info.min] = 10*sys.float_info.min
-                    #plI = np.log10(plI)
-                    misc_time[gpu_id] += fastlog(plI, 10*sys.float_info.min, TPB[0], num_SMs)
+                    misc_time[gpu_id] += fastlog(plI, bval_cutoff, TPB[0], num_SMs)
 
                 if "+" in sys.argv[4]:
                     try:
@@ -173,7 +171,7 @@ def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_p
 
             # Calculate errors
             err_sq_time[gpu_id] += prob(P[:, blk:blk+size], plI, values, std, np.ascontiguousarray(X[blk:blk+size, -1]), 
-                                        bval_cutoff, T_FACTORS, TPB[0], num_SMs)
+                                        T_FACTORS, TPB[0], num_SMs)
         # END LOOP OVER BLOCKS
     # END LOOP OVER ICs
 
@@ -227,7 +225,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
     T_FACTORS = np.geomspace(len(data[0])/10, 10, 8)
     #T_FACTORS = np.geomspace(450, 10, 8)
-    #T_FACTORS = np.array([100])
+    #T_FACTORS = np.array([1])
     print("Temperatures: ", T_FACTORS)
 
     N, P, X = make_grid(N, P, 0, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
@@ -255,7 +253,6 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 
         select_accept(nref, P, P_old, minus_err_sq, err_old, X, X_old)
 
-
         #N, P, X = make_grid(N, P, nref+1, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
         
         minus_err_sq = np.zeros(len(N))
@@ -274,7 +271,7 @@ from numba import cuda
 import threading
 import sys
 import time
-def get_data(exp_file, scale_f=1, sample_f=1, noisy=False):
+def get_data(exp_file, scale_f=1, sample_f=1):
     global bval_cutoff
     with open(exp_file, newline='') as file:
         ifstream = csv.reader(file)
@@ -321,16 +318,11 @@ def get_data(exp_file, scale_f=1, sample_f=1, noisy=False):
         print("cutoff", bval_cutoff)
         print("Num exp points affected by cutoff", np.sum(PL < bval_cutoff))
 
-        if noisy:
-            # Deal with noisy negative values before taking log
-            #bval_cutoff = np.mean(uncertainty)
-            PL = np.abs(PL)
-            #print("pl:", PL)
-            PL[PL < bval_cutoff] = bval_cutoff
-        #else:
-        #    # Set minimum observable to 1
-        #    bval_cutoff = scale_f
-        #    PL[PL < scale_f] = scale_f
+        # Deal with noisy negative values before taking log
+        #bval_cutoff = np.mean(uncertainty)
+        PL = np.abs(PL)
+        #print("pl:", PL)
+        PL[PL < bval_cutoff] = bval_cutoff
 
         uncertainty /= PL
         uncertainty /= 2.3 # Since we use log10 instead of ln
@@ -353,14 +345,14 @@ if __name__ == "__main__":
     #Time    = 250                                 # Final time (ns)
     Time = 2000
     #Time = 131867*0.025
-    #Time = 30
+    Time = 10
     #Length = 2000
     Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
     #T   = 4000
     T = 80000
-    #T = 4800
+    T = 400
     #T = 131867
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
@@ -396,10 +388,10 @@ if __name__ == "__main__":
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     mc_refs = 1
 
-    minX = np.array([1e8, 1e8, 20, 1e-10, 1e-11, 1e-6, 10, 1, 1, 10**-1, -0.2])
-    maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 5e2, 10, 1500, 1500, 10**-1, 0.2])
-    minX = np.array([1e8, 1e12, 20, 1e-10, 1e-11, 1e-6, 10, 1, 1, 10**-1, 0])
-    maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 5e2, 10, 1500, 1500, 10**-1, 0])
+    minX = np.array([1e8, 1e8, 20, 1e-4, 1e-11, 1e-4, 10, 1, 1, 10**-1, -1])
+    maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 5e2, 10, 1500, 1500, 10**-1, 1])
+    #minX = np.array([1e8, 3e15, 20, 0, 4.8e-11, 1e-4, 10, 1, 1, 10**-1, 0])
+    #maxX = np.array([1e8, 3e15, 20, 100, 4.8e-11, 5e2, 10, 1500, 1500, 10**-1, 0])
     #minX = np.array([1e8, 1e8, 20, 1e-10, 1e-11, 1, 1e4, 1, 1, 10**-1, -0.2])
     #maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 1e5, 1e4, 1500, 1500, 10**-1, 0.2])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
@@ -411,7 +403,7 @@ if __name__ == "__main__":
     OVERRIDE_EQUAL_MU = True
     OVERRIDE_EQUAL_S = False
     LOG_PL = True
-    NORMALIZE = True
+    NORMALIZE = False
 
     np.random.seed(42)
     RANDOM_SAMPLE = True
@@ -419,7 +411,6 @@ if __name__ == "__main__":
 
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
-    data_is_noisy = True
     P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
     minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
 
@@ -452,6 +443,7 @@ if __name__ == "__main__":
             
         print("Starting simulations with the following parameters:")
         print("{} iterations".format(mc_refs))
+        print("Log PL: {}".format(LOG_PL))
         print("Equal mu override: {}".format(OVERRIDE_EQUAL_MU))
         print("Equal Sf=Sb override: {}".format(OVERRIDE_EQUAL_S))
         print("Normalize all curves: {}".format(NORMALIZE))
@@ -465,9 +457,8 @@ if __name__ == "__main__":
             print("Refinement levels:")
             for i in range(num_params):
                 print("{}: {}".format(param_names[i], refs[:,i]))        
-        e_data = get_data(experimental_data_filename, scale_f=scale_f, sample_f = sample_factor, noisy=data_is_noisy) 
+        e_data = get_data(experimental_data_filename, scale_f=scale_f, sample_f = sample_factor) 
         print("\nExperimental data - {}".format(experimental_data_filename))
-        print("Data considered noisy: {}".format(data_is_noisy))
         print("Sample factor: {}".format(sample_factor))
         print(e_data)
         print("Output: {}".format(out_filename))
