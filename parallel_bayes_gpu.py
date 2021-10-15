@@ -68,11 +68,11 @@ def maxP(N,P,X, refs, minX, maxX):
         pN = np.prod(refs, axis=0)
         ind = indexGrid(N,refs)
         X = paramGrid(ind, refs, minX, maxX)
-    for ti, tf in enumerate(T_FACTORS):
-        print("Temperature:", tf)
-        wheremax = np.argmax(P[ti])
-        print(X[wheremax])
-        print("P = {}".format(P[ti, wheremax]))
+    #for ti, tf in enumerate(T_FACTORS):
+        #print("Temperature:", tf)
+    wheremax = np.argmax(P)
+    print(X[wheremax])
+    print("P = {}".format(P[wheremax]))
     #np.save("{}_BAYRAN_MAX.npy".format(wdir + out_filename), X[wheremax])
 
 def export_random_marP(X, P):
@@ -105,7 +105,7 @@ def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
             ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
             #X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
             X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
-    P = np.zeros((len(T_FACTORS), len(N)))                               # Likelihoods
+    P = np.zeros((len(N)))                               # Likelihoods
     if OVERRIDE_EQUAL_MU:
         X[:,2] = X[:,3]
 
@@ -113,8 +113,8 @@ def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
         X[:,6] = X[:,5]
     return N, P, X
 
-def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_per_ic, num_curves,
-             sim_params, init_params, T_FACTORS, gpu_id, num_gpus, solver_time, err_sq_time, misc_time):
+def simulate(model, data, nref, P, X, minus_err_sq, timepoints_per_ic, num_curves,
+             sim_params, init_params, gpu_id, num_gpus, solver_time, err_sq_time, misc_time):
     try:
         cuda.select_device(gpu_id)
     except IndexError:
@@ -122,17 +122,30 @@ def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_p
         return
     device = cuda.get_current_device()
     num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
+
+    if isinstance(sim_params[0], (int, float)):
+        thicknesses = [sim_params[0] for ic_num in range(num_curves)]
+    elif isinstance(sim_params[0], list):
+        thicknesses = list(sim_params[0])
+    
     for ic_num in range(num_curves):
         times = data[0][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
         values = data[1][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
         std = data[2][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
         assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
 
+        #values = values[2000:]
+        #times = times[2000:]
+        #std = std[2000:]
+        if gpu_id == 0: print("Data start time: {}".format(times[0]))
+        # Update thickness
+        sim_params[0] = thicknesses[ic_num]
+        print("new thickness: ", sim_params[0])
         for blk in range(gpu_id*GPU_GROUP_SIZE,len(X),num_gpus*GPU_GROUP_SIZE):
             size = min(GPU_GROUP_SIZE, len(X) - blk)
 
             if not LOADIN_PL:
-                plI = np.empty((size, timepoints_per_ic), dtype=np.float32)
+                plI = np.empty((size, timepoints_per_ic), dtype=np.float32) #f32 or f64 doesn't matter much here
                 plN = np.empty((size, 2, sim_params[2]))
                 plP = np.empty((size, 2, sim_params[2]))
                 plE = np.empty((size, 2, sim_params[2]+1))
@@ -141,6 +154,7 @@ def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_p
                     solver_time[gpu_id] += model(plI, plN, plP, plE, X[blk:blk+size, :-1], 
                                                  sim_params, init_params[ic_num], 
                                                  TPB,8*num_SMs, max_sims_per_block, init_mode=init_mode)
+                    #plI = np.ascontiguousarray(plI[:,2000:])
                 else:
                     plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
         
@@ -170,8 +184,8 @@ def simulate(model, data, nref, P, X, X_old, minus_err_sq, err_old, timepoints_p
 
 
             # Calculate errors
-            err_sq_time[gpu_id] += prob(P[:, blk:blk+size], plI, values, std, np.ascontiguousarray(X[blk:blk+size, -1]), 
-                                        T_FACTORS, TPB[0], num_SMs)
+            err_sq_time[gpu_id] += prob(P[blk:blk+size], plI, values, std, np.ascontiguousarray(X[blk:blk+size, -1]), 
+                                        TPB[0], num_SMs)
         # END LOOP OVER BLOCKS
     # END LOOP OVER ICs
 
@@ -213,7 +227,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     global has_GPU
     global init_mode
     global GPU_GROUP_SIZE
-    global T_FACTORS
+    #global T_FACTORS
     global num_gpus
 
     solver_time = np.zeros(num_gpus)
@@ -223,25 +237,27 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     num_curves = len(init_params)
     timepoints_per_ic = sim_params[3] // sim_params[4] + 1
     assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
-    T_FACTORS = np.geomspace(len(data[0])/10, 10, 8)
+    #T_FACTORS = np.geomspace(len(data[0])/10, 10, 8)
     #T_FACTORS = np.geomspace(450, 10, 8)
     #T_FACTORS = np.array([1])
-    print("Temperatures: ", T_FACTORS)
+    #print("Temperatures: ", T_FACTORS)
 
     N, P, X = make_grid(N, P, 0, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
     minus_err_sq = np.zeros(len(N))
-    err_old = np.zeros_like(minus_err_sq)
-    P_old = np.zeros_like(P)
-    X_old = np.zeros_like(X)
-    accept = np.zeros_like(minus_err_sq)
+    #err_old = np.zeros_like(minus_err_sq)
+    #P_old = np.zeros_like(P)
+    #X_old = np.zeros_like(X)
+    #accept = np.zeros_like(minus_err_sq)
+
+    sim_params = [list(sim_params) for i in range(num_gpus)]
 
     for nref in range(mc_refs):                            # Loop refinements
 
         threads = []
         for gpu_id in range(num_gpus):
             print("Starting thread {}".format(gpu_id))
-            thread = threading.Thread(target=simulate, args=(model, data, nref, P, X, X_old, minus_err_sq, err_old,
-                                      timepoints_per_ic, num_curves,sim_params, init_params, T_FACTORS, gpu_id, num_gpus,
+            thread = threading.Thread(target=simulate, args=(model, data, nref, P, X, minus_err_sq,
+                                      timepoints_per_ic, num_curves,sim_params[gpu_id], init_params, gpu_id, num_gpus,
                                       solver_time, err_sq_time, misc_time))
             threads.append(thread)
             thread.start()
@@ -251,18 +267,18 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             thread.join()
             print("Thread {} closed".format(gpu_id))
 
-        select_accept(nref, P, P_old, minus_err_sq, err_old, X, X_old)
+        #select_accept(nref, P, P_old, minus_err_sq, err_old, X, X_old)
 
         #N, P, X = make_grid(N, P, nref+1, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
         
         minus_err_sq = np.zeros(len(N))
 
-    P_old = normalize(P_old)
+    #P_old = normalize(P_old)
 
     print("Total tEvol time: {}, avg {}".format(solver_time, np.mean(solver_time)))
     print("Total err_sq time (temperatures and mag_offsets): {}, avg {}".format(err_sq_time, np.mean(err_sq_time)))
     print("Total misc time: {}, avg {}".format(misc_time, np.mean(misc_time)))
-    return N, P_old, X_old
+    return N, P, X
 
 
 #-----------------------------------------------------------------------------#
@@ -335,6 +351,7 @@ def get_initpoints(init_file, scale_f=1e-21):
         ifstream = csv.reader(file)
         initpoints = []
         for row in ifstream:
+            if len(row) == 0: continue
             assert len(row) == L, "Error: length of initial condition does not match simPar: L\n IC:{}, L:{}".format(len(row), L)
             initpoints.append(row)
 
@@ -343,30 +360,30 @@ def get_initpoints(init_file, scale_f=1e-21):
 if __name__ == "__main__":
     # simPar
     #Time    = 250                                 # Final time (ns)
-    Time = 2000
+    Time = 1000
     #Time = 131867*0.025
-    Time = 10
+    #Time = 10
     #Length = 2000
-    Length  = 311                            # Length (nm)
+    Length = [311,2000,311,2000, 311, 2000]
+    #Length  = 311                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
     #T   = 4000
-    T = 80000
-    T = 400
+    T = 40000
     #T = 131867
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
     MAX = 1000                                  # Max iterations
     pT = tuple(np.array(pT)*T//100)
-    simPar = (Length, Time, L, T, plT, pT, tol, MAX)
+    simPar = [Length, Time, L, T, plT, pT, tol, MAX]
     
     # iniPar and available modes
     # 'exp' - parameters a and l for a*np.exp(-x/l)
     # 'points' - direct list of dN [cm^-3] points as csv file read using get_initpoints()
     init_mode = "points"
-    a  = 1e18/(1e7)**3                        # Amplitude
-    l  = 100                                  # Length scale [nm]
+    #a  = 1e18/(1e7)**3                        # Amplitude
+    #l  = 100                                  # Length scale [nm]
     #iniPar = np.array([[a, l]])
     iniPar = get_initpoints(sys.argv[2])
 
@@ -388,10 +405,10 @@ if __name__ == "__main__":
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     mc_refs = 1
 
-    minX = np.array([1e8, 1e8, 20, 1e-4, 1e-11, 1e-4, 10, 1, 1, 10**-1, -1])
-    maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 5e2, 10, 1500, 1500, 10**-1, 1])
-    #minX = np.array([1e8, 3e15, 20, 0, 4.8e-11, 1e-4, 10, 1, 1, 10**-1, 0])
-    #maxX = np.array([1e8, 3e15, 20, 100, 4.8e-11, 5e2, 10, 1500, 1500, 10**-1, 0])
+    minX = np.array([1e8, 3e15, 20, 20, 1e-11, 1e-4, 100, 1, 1, 10**-1, -1])
+    maxX = np.array([1e8, 3e15, 20, 20, 1e-9, 1e4, 100, 1500, 3000, 10**-1, 1])
+    #minX = np.array([1e8, 1e8, 20, 0, 1e-11, 10, 10, 1, 871, 10**-1, 0])
+    #maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 10, 10, 1500, 871, 10**-1, 0])
     #minX = np.array([1e8, 1e8, 20, 1e-10, 1e-11, 1, 1e4, 1, 1, 10**-1, -0.2])
     #maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 1e5, 1e4, 1500, 1500, 10**-1, 0.2])
     #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
@@ -407,7 +424,7 @@ if __name__ == "__main__":
 
     np.random.seed(42)
     RANDOM_SAMPLE = True
-    NUM_POINTS = 2 ** 20
+    NUM_POINTS = 2 ** 18
 
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
@@ -447,6 +464,7 @@ if __name__ == "__main__":
         print("Equal mu override: {}".format(OVERRIDE_EQUAL_MU))
         print("Equal Sf=Sb override: {}".format(OVERRIDE_EQUAL_S))
         print("Normalize all curves: {}".format(NORMALIZE))
+        print("Lengths: {}".format(Length))
         for i in range(num_params):
             if minX[i] == maxX[i]:
                 print("{}: {}".format(param_names[i], minX[i]))
@@ -504,18 +522,22 @@ if __name__ == "__main__":
         os.mkdir(wdir)
     except FileExistsError:
         print("{} dir already exists".format(out_filename))
-    #np.save("{}_BAYRAN_P.npy".format(wdir + out_filename), P)
-    #np.save("{}_BAYRAN_X.npy".format(wdir + out_filename), X)
-
     clock0 = time.time()
+
     try:
         print("Writing to /blue:")
-        export_random_marP(X, P)
+        np.save("{}_BAYRAN_P.npy".format(wdir + out_filename), P)
+        np.save("{}_BAYRAN_X.npy".format(wdir + out_filename), X)
+
+        #export_random_marP(X, P)
     except Exception as e:
         print(e)
         print("Write failed; rewriting to backup location /home:")
         wdir = r"/home/cfai2304/super_bayes/"
-        export_random_marP(X, P)
+        np.save("{}_BAYRAN_P.npy".format(wdir + out_filename), P)
+        np.save("{}_BAYRAN_X.npy".format(wdir + out_filename), X)
 
-    maxP(N, P, X, refs, minX, maxX)
+        #export_random_marP(X, P)
+
+    #maxP(N, P, X, refs, minX, maxX)
     print("Export took {}".format(time.time() - clock0))

@@ -18,35 +18,35 @@ def lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTOR):
     return
 
 @cuda.jit(device=False)
-def kernel_lnP(P, plI, values, uncertainty, mag_grid, T_FACTORS):
+def kernel_lnP(P, plI, values, uncertainty, mag_grid, DEBUG_w):
     #cutoff = math.log10(bval_cutoff)
     err_arr = cuda.shared.array(shape=(shared_array_size,), dtype=float64)
     thr = cuda.grid(1)
     thr2 = cuda.threadIdx.x
-    for ti in range(len(T_FACTORS)):
-        tf = T_FACTORS[ti]
-        for j in range(thr, num_paramsets, cuda.gridsize(1)):
-            err_arr[thr2] = 0
+    #for ti in range(len(T_FACTORS)):
+    #    tf = T_FACTORS[ti]
+    for j in range(thr, num_paramsets, cuda.gridsize(1)):
+        err_arr[thr2] = 0
 
-            for i in range(num_observations):
-                err = plI[j,i] + mag_grid[j]
-                #if err < cutoff:
-                #    err = cutoff
+        for i in range(num_observations):
+            err = plI[j,i] + mag_grid[j]
+            #if err < cutoff:
+            #    err = cutoff
 
-                err -= values[i]
+            err -= values[i]
 
-                err = err ** 2
-                #err /= (2 * uncertainty[i] ** 2)
-                err_arr[thr2] += err
+            err = err ** 2
+            #err /= (2 * uncertainty[i] ** 2)
+            err_arr[thr2] += err * DEBUG_w[i]
 
 
-            P[ti,j] -= err_arr[thr2]
-            P[ti,j] /= tf
-            #P[ti,j] -= math.log(math.pi*sig_sq)/2 * num_observations
+        P[j] -= err_arr[thr2]
+        #P[j] /= tf
+        #P[j] -= math.log(math.pi*sig_sq)/2 * num_observations
 
     return
 
-def prob(P, plI, values, uncertainty, mag_grid, T_FACTORS, TPB, BPG):
+def prob(P, plI, values, uncertainty, mag_grid, TPB, BPG):
     global num_paramsets
     global num_observations
     global shared_array_size
@@ -54,12 +54,16 @@ def prob(P, plI, values, uncertainty, mag_grid, T_FACTORS, TPB, BPG):
     num_observations = len(values)
     num_paramsets = len(plI)
     shared_array_size = int(TPB)
+    weight = np.ones_like(values)
+    #weight[40880:83240] += 1
+    #weight[100990:120500] += 1
     v_dev = cuda.to_device(values)
     u_dev = cuda.to_device(uncertainty)
     m_dev = cuda.to_device(mag_grid)
     plI_dev = cuda.to_device(plI)
     P_dev = cuda.to_device(np.zeros_like(P))
-    kernel_lnP[BPG, TPB](P_dev, plI_dev, v_dev, u_dev, m_dev, T_FACTORS)
+    DEBUG_w_dev = cuda.to_device(weight)
+    kernel_lnP[BPG, TPB](P_dev, plI_dev, v_dev, u_dev, m_dev, DEBUG_w_dev)
     cuda.synchronize()
     P += P_dev.copy_to_host()
 
