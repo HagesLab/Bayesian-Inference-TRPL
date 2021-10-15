@@ -134,9 +134,6 @@ def simulate(model, data, nref, P, X, minus_err_sq, timepoints_per_ic, num_curve
         std = data[2][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
         assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
 
-        #values = values[2000:]
-        #times = times[2000:]
-        #std = std[2000:]
         if gpu_id == 0: print("Data start time: {}".format(times[0]))
         # Update thickness
         sim_params[0] = thicknesses[ic_num]
@@ -154,7 +151,6 @@ def simulate(model, data, nref, P, X, minus_err_sq, timepoints_per_ic, num_curve
                     solver_time[gpu_id] += model(plI, plN, plP, plE, X[blk:blk+size, :-1], 
                                                  sim_params, init_params[ic_num], 
                                                  TPB,8*num_SMs, max_sims_per_block, init_mode=init_mode)
-                    #plI = np.ascontiguousarray(plI[:,2000:])
                 else:
                     plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
         
@@ -191,43 +187,11 @@ def simulate(model, data, nref, P, X, minus_err_sq, timepoints_per_ic, num_curve
 
     return
 
-def select_accept(nref,P, P_old, minus_err_sq, err_old, X, X_old):
-    # Evaluate acceptance criteria on the basis of squared errors - default temperature and zero mag offset
-    minus_err_sq = P[0, :]
-    if nref == 0:
-        accept = np.ones_like(minus_err_sq)
-
-    else:
-        # Less negative is more probable
-        accept = np.where(minus_err_sq > err_old, 1, 0)
-
-    print("Accept fraction: {}".format(np.sum(accept) / NUM_POINTS))
-
-    for x in np.where(accept)[0]:
-        err_old[x] = minus_err_sq[x]
-        X_old[x] = X[x]
-        P_old[:,x] = P[:,x]
-
-    return
-
-def normalize(P):
-    # Normalization scheme - to ensure that np.sum(P) is never zero due to mass underflow
-    # First, shift lnP's up so max lnP is zero, ensuring at least one nonzero P
-    # Then shift lnP a little further to maximize number of non-underflowing values
-    # without causing overflow
-    # Key is only to add or subtract from lnP - that way any introduced factors cancel out
-    # during normalize by sum(P)
-    for ti, tf in enumerate(T_FACTORS):
-        P[ti] = np.exp(P[ti] - np.max(P[ti]) + 1000*np.log(2) - np.log(P[ti].size))
-        P[ti]  /= np.sum(P[ti])                                      # Normalize P's
-    return P
-
 def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):        # Driver function
     global num_SMs
     global has_GPU
     global init_mode
     global GPU_GROUP_SIZE
-    #global T_FACTORS
     global num_gpus
 
     solver_time = np.zeros(num_gpus)
@@ -237,17 +201,8 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
     num_curves = len(init_params)
     timepoints_per_ic = sim_params[3] // sim_params[4] + 1
     assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
-    #T_FACTORS = np.geomspace(len(data[0])/10, 10, 8)
-    #T_FACTORS = np.geomspace(450, 10, 8)
-    #T_FACTORS = np.array([1])
-    #print("Temperatures: ", T_FACTORS)
 
     N, P, X = make_grid(N, P, 0, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
-    minus_err_sq = np.zeros(len(N))
-    #err_old = np.zeros_like(minus_err_sq)
-    #P_old = np.zeros_like(P)
-    #X_old = np.zeros_like(X)
-    #accept = np.zeros_like(minus_err_sq)
 
     sim_params = [list(sim_params) for i in range(num_gpus)]
 
@@ -266,14 +221,6 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
             print("Ending thread {}".format(gpu_id))
             thread.join()
             print("Thread {} closed".format(gpu_id))
-
-        #select_accept(nref, P, P_old, minus_err_sq, err_old, X, X_old)
-
-        #N, P, X = make_grid(N, P, nref+1, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
-        
-        minus_err_sq = np.zeros(len(N))
-
-    #P_old = normalize(P_old)
 
     print("Total tEvol time: {}, avg {}".format(solver_time, np.mean(solver_time)))
     print("Total err_sq time (temperatures and mag_offsets): {}, avg {}".format(err_sq_time, np.mean(err_sq_time)))
