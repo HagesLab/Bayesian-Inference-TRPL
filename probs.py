@@ -1,6 +1,7 @@
-from numba import cuda
+from numba import cuda, float64
 import numpy as np
 import math
+import time
 def lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTOR):
     for m, mag in enumerate(mag_grid):
         err = plI + mag
@@ -17,29 +18,82 @@ def lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTOR):
     return
 
 @cuda.jit(device=False)
-def kernel_lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTOR):
-    cutoff = math.log10(bval_cutoff)
-    num_observations = len(values)
-    num_paramsets = len(plI)
-    sig_sq = T_FACTOR
+def kernel_lnP(P, plI, values, uncertainty, mag_grid, DEBUG_w):
+    #cutoff = math.log10(bval_cutoff)
+    err_arr = cuda.shared.array(shape=(shared_array_size,), dtype=float64)
     thr = cuda.grid(1)
-    for m in range(len(mag_grid)):
-        for j in range(thr, num_paramsets, cuda.gridsize(1)):
-            
-            for i in range(num_observations):
-                err = plI[j,i] + mag_grid[m]
-                if err < cutoff:
-                    err = cutoff
+    thr2 = cuda.threadIdx.x
+    #for ti in range(len(T_FACTORS)):
+    #    tf = T_FACTORS[ti]
+    for j in range(thr, num_paramsets, cuda.gridsize(1)):
+        err_arr[thr2] = 0
 
-                err -= values[i]
+        for i in range(num_observations):
+            err = plI[j,i] + mag_grid[j]
+            #if err < cutoff:
+            #    err = cutoff
 
-                err = err ** 2
+            err -= values[i]
 
-                P[j,m] -= err
-            P[j,m] /= sig_sq
-            P[j,m] -= math.log(math.pi*sig_sq)/2 * num_observations
+            err = err ** 2
+            #err /= (2 * uncertainty[i] ** 2)
+            err_arr[thr2] += err * DEBUG_w[i]
+
+
+        P[j] -= err_arr[thr2]
+        #P[j] /= tf
+        #P[j] -= math.log(math.pi*sig_sq)/2 * num_observations
 
     return
+
+def prob(P, plI, values, uncertainty, mag_grid, TPB, BPG):
+    global num_paramsets
+    global num_observations
+    global shared_array_size
+    clock0 = time.time()
+    num_observations = len(values)
+    num_paramsets = len(plI)
+    shared_array_size = int(TPB)
+    weight = np.ones_like(values)
+    #weight[40880:83240] += 1
+    #weight[100990:120500] += 1
+    v_dev = cuda.to_device(values)
+    u_dev = cuda.to_device(uncertainty)
+    m_dev = cuda.to_device(mag_grid)
+    plI_dev = cuda.to_device(plI)
+    P_dev = cuda.to_device(np.zeros_like(P))
+    DEBUG_w_dev = cuda.to_device(weight)
+    kernel_lnP[BPG, TPB](P_dev, plI_dev, v_dev, u_dev, m_dev, DEBUG_w_dev)
+    cuda.synchronize()
+    P += P_dev.copy_to_host()
+
+    return time.time() - clock0
+
+@cuda.jit(device=False)
+def log_kernel(plI, MIN, TPB, BPG):
+    blk = cuda.blockIdx.x
+    thr = cuda.threadIdx.x
+
+    for i in range(blk, num_paramsets, BPG):
+        for j in range(thr, num_observations, TPB):
+            if plI[i,j] < MIN:
+                plI[i,j] = MIN
+
+            plI[i,j] = math.log10(plI[i,j])
+
+
+def fastlog(plI, MIN, TPB, BPG):
+    global num_paramsets
+    global num_observations
+    num_observations = len(plI[0])
+    num_paramsets = len(plI)
+    clock0 = time.time()
+    plI_dev = cuda.to_device(plI)
+    log_kernel[BPG, TPB](plI_dev, MIN, TPB, BPG)
+    cuda.synchronize()
+    plI[:] = plI_dev.copy_to_host()
+
+    return time.time() - clock0
 
 if __name__ == "__main__":
     tests = 10
