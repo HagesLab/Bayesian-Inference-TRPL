@@ -113,7 +113,7 @@ def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
         X[:,6] = X[:,5]
     return N, P, X
 
-def simulate(model, data, nref, P, X, minus_err_sq, timepoints_per_ic, num_curves,
+def simulate(model, e_data, nref, P, X, timepoints_per_ic, num_curves,
              sim_params, init_params, gpu_id, num_gpus, solver_time, err_sq_time, misc_time):
     try:
         cuda.select_device(gpu_id)
@@ -129,12 +129,13 @@ def simulate(model, data, nref, P, X, minus_err_sq, timepoints_per_ic, num_curve
         thicknesses = list(sim_params[0])
     
     for ic_num in range(num_curves):
-        times = data[0][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
-        values = data[1][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
-        std = data[2][ic_num*timepoints_per_ic:(ic_num+1)*timepoints_per_ic]
+        times = e_data[0][ic_num]
+        values = e_data[1][ic_num]
+        std = e_data[2][ic_num]
         assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
 
-        if gpu_id == 0: print("Data start time: {}".format(times[0]))
+        if gpu_id == 0: 
+            print("Data start time: {}".format(times[0]))
         # Update thickness
         sim_params[0] = thicknesses[ic_num]
         print("new thickness: ", sim_params[0])
@@ -187,7 +188,7 @@ def simulate(model, data, nref, P, X, minus_err_sq, timepoints_per_ic, num_curve
 
     return
 
-def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):        # Driver function
+def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, e_data):        # Driver function
     global num_SMs
     global has_GPU
     global init_mode
@@ -200,7 +201,8 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
 
     num_curves = len(init_params)
     timepoints_per_ic = sim_params[3] // sim_params[4] + 1
-    assert (len(data[0]) % timepoints_per_ic == 0), "Error: exp data length not a multiple of points_per_ic"
+    for i in range(len(e_data[0])):
+        assert (len(e_data[0][i]) % timepoints_per_ic == 0), "Error: experiment {} data length not a multiple of points_per_ic".format(i+1)
 
     N, P, X = make_grid(N, P, 0, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
 
@@ -211,7 +213,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, data):  
         threads = []
         for gpu_id in range(num_gpus):
             print("Starting thread {}".format(gpu_id))
-            thread = threading.Thread(target=simulate, args=(model, data, nref, P, X, minus_err_sq,
+            thread = threading.Thread(target=simulate, args=(model, e_data, nref, P, X,
                                       timepoints_per_ic, num_curves,sim_params[gpu_id], init_params, gpu_id, num_gpus,
                                       solver_time, err_sq_time, misc_time))
             threads.append(thread)
@@ -236,61 +238,60 @@ import sys
 import time
 def get_data(exp_file, scale_f=1, sample_f=1):
     global bval_cutoff
+    t = []
+    PL = []
+    uncertainty = []
+    bval_cutoff = 10 * sys.float_info.min
+    print("cutoff", bval_cutoff)
+
     with open(exp_file, newline='') as file:
+        next_t = []
+        next_PL = []
+        next_uncertainty = []
         ifstream = csv.reader(file)
-        t = []
-        PL = []
-        uncertainty = []
         count = 0
         dataset_end_inds = [0]
         for row in ifstream:
-            if float(row[0]) == 0:
-                dataset_end_inds.append(dataset_end_inds[-1] + count)
+            if row[0] == "END" or (float(row[0]) == 0 and len(next_t)):
+                # t=0 means we finished reading the current PL curve - preprocess and package it
+                #dataset_end_inds.append(dataset_end_inds[-1] + count)
+                next_t = np.array(next_t)
+                next_PL = np.array(next_PL) * scale_f
+                next_uncertainty = np.array(next_uncertainty) * scale_f
+
+                print("PL curve #{} finished reading".format(len(t)+1))
+                print("Number of points: {}".format(len(next_t)))
+                print("Times: {}".format(next_t))
+                print("PL values: {}".format(next_PL))
+                if LOG_PL:
+                    print("Num exp points affected by cutoff", np.sum(next_PL < bval_cutoff))
+
+                    # Deal with noisy negative values before taking log
+                    #bval_cutoff = np.mean(uncertainty)
+                    next_PL = np.abs(next_PL)
+                    next_PL[next_PL < bval_cutoff] = bval_cutoff
+
+                    next_uncertainty /= next_PL
+                    next_uncertainty /= 2.3 # Since we use log10 instead of ln
+                    next_PL = np.log10(next_PL)
+
+                t.append(next_t)
+                PL.append(next_PL)
+                uncertainty.append(next_uncertainty)
+
+                next_t = []
+                next_PL = []
+                next_uncertainty = []
+
                 count = 0
-            if not (count % sample_f):
-                t.append(float(row[0]))
-                PL.append(float(row[1]))
-                uncertainty.append(float(row[2]))
+
+            if not row[0] == "END" and not (count % sample_f):
+                next_t.append(float(row[0]))
+                next_PL.append(float(row[1]))
+                next_uncertainty.append(float(row[2]))
             
             count += 1
-    # Unpack
-    t = np.array(t)
-    PL = np.array(PL) * scale_f
-    uncertainty = np.array(uncertainty) * scale_f
 
-    # FIgure out where curves start and end
-    dataset_end_inds.append(dataset_end_inds[-1] + count)
-    dataset_end_inds.pop(0)
-    dataset_end_inds.pop(-1)
-    dataset_end_inds.append(None)
-  
-    if NORMALIZE:
-        print(dataset_end_inds)
-        print("t=0 pl values:", PL[dataset_end_inds[:-1]])
-
-        NORM_FACTORS = PL[dataset_end_inds[:-1]]
-
-        # Normalize everything to its own t=0
-        for i in range(len(dataset_end_inds[:-1])):
-            PL[dataset_end_inds[i]:dataset_end_inds[i+1]] /= NORM_FACTORS[i]
-            uncertainty[dataset_end_inds[i]:dataset_end_inds[i+1]] /= NORM_FACTORS[i]
-
-    bval_cutoff = 10 * sys.float_info.min
-
-    if LOG_PL:
-        print("cutoff", bval_cutoff)
-        print("Num exp points affected by cutoff", np.sum(PL < bval_cutoff))
-
-        # Deal with noisy negative values before taking log
-        #bval_cutoff = np.mean(uncertainty)
-        PL = np.abs(PL)
-        #print("pl:", PL)
-        PL[PL < bval_cutoff] = bval_cutoff
-
-        uncertainty /= PL
-        uncertainty /= 2.3 # Since we use log10 instead of ln
-        PL = np.log10(PL)
-        print("uncertainty", uncertainty)
     return (t, PL, uncertainty)
 
 def get_initpoints(init_file, scale_f=1e-21):
