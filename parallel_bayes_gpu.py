@@ -83,11 +83,11 @@ def export_random_marP(X, P):
         np.save("{}_BAYRAN_{}.npy".format(wdir + out_filename, int(tf)), Pti)
     return
 
-def make_grid(N, P, nref, refs, minX, maxX, minP, num_obs):
+def make_grid(N, P, nref, refs, minX, maxX, minP):
     if RANDOM_SAMPLE:
         N = np.arange(NUM_POINTS)
-        print(NUM_POINTS, "random points")
         X = random_grid(minX, maxX, NUM_POINTS, do_grid=False, refs=refs)
+        print(len(X), "random points")
 
     else:
         if P is not None:
@@ -134,11 +134,22 @@ def simulate(model, e_data, nref, P, X, timepoints_per_ic, num_curves,
         std = e_data[2][ic_num]
         assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
 
-        if gpu_id == 0: 
-            print("Data start time: {}".format(times[0]))
         # Update thickness
         sim_params[0] = thicknesses[ic_num]
-        print("new thickness: ", sim_params[0])
+        if gpu_id == 0: 
+            print("new thickness: {}".format(sim_params[0]))
+
+        num_observations = len(values)
+        num_tsteps_needed = (num_observations-1)*sim_params[4]
+
+        if gpu_id == 0: 
+            print("Starting with values :{} \ncount: {}".format(values, len(values)))
+            print("Taking {} timesteps".format(sim_params[3]))
+            print("Final time: {}".format(sim_params[1]))
+        assert num_observations == timepoints_per_ic, "E1"
+        assert sim_params[3] == num_tsteps_needed, "E2"
+        print(sim_params)
+
         for blk in range(gpu_id*GPU_GROUP_SIZE,len(X),num_gpus*GPU_GROUP_SIZE):
             size = min(GPU_GROUP_SIZE, len(X) - blk)
 
@@ -204,7 +215,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, e_data):
     for i in range(len(e_data[0])):
         assert (len(e_data[0][i]) % timepoints_per_ic == 0), "Error: experiment {} data length not a multiple of points_per_ic".format(i+1)
 
-    N, P, X = make_grid(N, P, 0, refs, minX, maxX, minP, num_curves*timepoints_per_ic)
+    N, P, X = make_grid(N, P, 0, refs, minX, maxX, minP)
 
     sim_params = [list(sim_params) for i in range(num_gpus)]
 
@@ -245,6 +256,7 @@ def get_data(exp_file, scale_f=1, sample_f=1):
     print("cutoff", bval_cutoff)
 
     with open(exp_file, newline='') as file:
+        eof = False
         next_t = []
         next_PL = []
         next_uncertainty = []
@@ -252,7 +264,9 @@ def get_data(exp_file, scale_f=1, sample_f=1):
         count = 0
         dataset_end_inds = [0]
         for row in ifstream:
-            if row[0] == "END" or (float(row[0]) == 0 and len(next_t)):
+            if row[0] == "END":
+                eof = True
+            if eof or (float(row[0]) == 0 and len(next_t)):
                 # t=0 means we finished reading the current PL curve - preprocess and package it
                 #dataset_end_inds.append(dataset_end_inds[-1] + count)
                 next_t = np.array(next_t)
@@ -285,7 +299,7 @@ def get_data(exp_file, scale_f=1, sample_f=1):
 
                 count = 0
 
-            if not row[0] == "END" and not (count % sample_f):
+            if not eof and not (count % sample_f):
                 next_t.append(float(row[0]))
                 next_PL.append(float(row[1]))
                 next_uncertainty.append(float(row[2]))
@@ -308,16 +322,14 @@ def get_initpoints(init_file, scale_f=1e-21):
 if __name__ == "__main__":
     # simPar
     #Time    = 250                                 # Final time (ns)
-    Time = 1000
+    Time = 2000
     #Time = 131867*0.025
-    #Time = 10
-    #Length = 2000
     Length = [311,2000,311,2000, 311, 2000]
-    #Length  = 311                            # Length (nm)
+    Length  = 2000                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
     #T   = 4000
-    T = 40000
+    T = 80000
     #T = 131867
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
@@ -341,7 +353,7 @@ if __name__ == "__main__":
     unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0, 1])
     do_log = np.array([1,1,0,0,1,1,1,0,0,0,0])
 
-    GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
+    GPU_GROUP_SIZE = 2 ** 11                  # Number of simulations assigned to GPU at a time - GPU has limited memory
     num_gpus = 8
 
     ref1 = np.array([1,1,1,128,128,1,1,1,1,1])
@@ -353,8 +365,8 @@ if __name__ == "__main__":
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     mc_refs = 1
 
-    minX = np.array([1e8, 3e15, 20, 20, 1e-11, 1e-4, 100, 1, 1, 10**-1, -1])
-    maxX = np.array([1e8, 3e15, 20, 20, 1e-9, 1e4, 100, 1500, 3000, 10**-1, 1])
+    minX = np.array([1e8, 3e15, 20, 20, 1e-11, 1e-4, 1e-4, 1, 1, 10**-1, -1])
+    maxX = np.array([1e8, 3e15, 20, 20, 1e-9, 1e4, 1e4, 1500, 3000, 10**-1, 1])
     #minX = np.array([1e8, 1e8, 20, 0, 1e-11, 10, 10, 1, 871, 10**-1, 0])
     #maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 10, 10, 1500, 871, 10**-1, 0])
     #minX = np.array([1e8, 1e8, 20, 1e-10, 1e-11, 1, 1e4, 1, 1, 10**-1, -0.2])
@@ -372,7 +384,7 @@ if __name__ == "__main__":
 
     np.random.seed(42)
     RANDOM_SAMPLE = True
-    NUM_POINTS = 2 ** 18
+    NUM_POINTS = 2 ** 14
 
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
