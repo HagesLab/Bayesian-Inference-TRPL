@@ -25,10 +25,10 @@ def kernel_lnP(P, plI, values, uncertainty, mag_grid, DEBUG_w):
     thr2 = cuda.threadIdx.x
     #for ti in range(len(T_FACTORS)):
     #    tf = T_FACTORS[ti]
-    for j in range(thr, num_paramsets, cuda.gridsize(1)):
+    for j in range(thr, len(plI), cuda.gridsize(1)):
         err_arr[thr2] = 0
 
-        for i in range(num_observations):
+        for i in range(len(values)):
             err = plI[j,i] + mag_grid[j]
             #if err < cutoff:
             #    err = cutoff
@@ -47,12 +47,8 @@ def kernel_lnP(P, plI, values, uncertainty, mag_grid, DEBUG_w):
     return
 
 def prob(P, plI, values, uncertainty, mag_grid, TPB, BPG):
-    global num_paramsets
-    global num_observations
     global shared_array_size
     clock0 = time.time()
-    num_observations = len(values)
-    num_paramsets = len(plI)
     shared_array_size = int(TPB)
     weight = np.ones_like(values)
     #weight[40880:83240] += 1
@@ -74,8 +70,8 @@ def log_kernel(plI, MIN, TPB, BPG):
     blk = cuda.blockIdx.x
     thr = cuda.threadIdx.x
 
-    for i in range(blk, num_paramsets, BPG):
-        for j in range(thr, num_observations, TPB):
+    for i in range(blk, len(plI), BPG):
+        for j in range(thr, len(plI[0]), TPB):
             if plI[i,j] < MIN:
                 plI[i,j] = MIN
 
@@ -83,10 +79,6 @@ def log_kernel(plI, MIN, TPB, BPG):
 
 
 def fastlog(plI, MIN, TPB, BPG):
-    global num_paramsets
-    global num_observations
-    num_observations = len(plI[0])
-    num_paramsets = len(plI)
     clock0 = time.time()
     plI_dev = cuda.to_device(plI)
     log_kernel[BPG, TPB](plI_dev, MIN, TPB, BPG)

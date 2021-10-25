@@ -113,7 +113,7 @@ def make_grid(N, P, nref, refs, minX, maxX, minP):
         X[:,6] = X[:,5]
     return N, P, X
 
-def simulate(model, e_data, nref, P, X, timepoints_per_ic, num_curves,
+def simulate(model, e_data, nref, P, X, plI, num_curves,
              sim_params, init_params, gpu_id, num_gpus, solver_time, err_sq_time, misc_time):
     try:
         cuda.select_device(gpu_id)
@@ -141,26 +141,29 @@ def simulate(model, e_data, nref, P, X, timepoints_per_ic, num_curves,
 
         num_observations = len(values)
         num_tsteps_needed = (num_observations-1)*sim_params[4]
+        sim_params[3] = num_tsteps_needed
+        sim_params[1] = times[-1]
+        sim_params[5] = tuple(np.array(pT)*sim_params[3]//100)
 
         if gpu_id == 0: 
             print("Starting with values :{} \ncount: {}".format(values, len(values)))
             print("Taking {} timesteps".format(sim_params[3]))
             print("Final time: {}".format(sim_params[1]))
-        assert num_observations == timepoints_per_ic, "E1"
-        assert sim_params[3] == num_tsteps_needed, "E2"
-        print(sim_params)
+
+            print(sim_params)
 
         for blk in range(gpu_id*GPU_GROUP_SIZE,len(X),num_gpus*GPU_GROUP_SIZE):
             size = min(GPU_GROUP_SIZE, len(X) - blk)
 
             if not LOADIN_PL:
-                plI = np.empty((size, timepoints_per_ic), dtype=np.float32) #f32 or f64 doesn't matter much here
+                plI[gpu_id] = np.empty((size, num_observations), dtype=np.float32) #f32 or f64 doesn't matter much here
+                assert len(plI[gpu_id][0]) == len(values), "Error: plI size mismatch"
                 plN = np.empty((size, 2, sim_params[2]))
                 plP = np.empty((size, 2, sim_params[2]))
                 plE = np.empty((size, 2, sim_params[2]+1))
 
                 if has_GPU:
-                    solver_time[gpu_id] += model(plI, plN, plP, plE, X[blk:blk+size, :-1], 
+                    solver_time[gpu_id] += model(plI[gpu_id], plN, plP, plE, X[blk:blk+size, :-1], 
                                                  sim_params, init_params[ic_num], 
                                                  TPB,8*num_SMs, max_sims_per_block, init_mode=init_mode)
                 else:
@@ -168,12 +171,11 @@ def simulate(model, e_data, nref, P, X, timepoints_per_ic, num_curves,
         
                 if NORMALIZE:
                     # Normalize each model to its own t=0
-                    plI = plI.T
-                    plI /= plI[0]
-                    plI = plI.T
+                    plI[gpu_id] = plI[gpu_id].T
+                    plI[gpu_id] /= plI[gpu_id][0]
+                    plI[gpu_id] = plI[gpu_id].T
                 if LOG_PL:
-                    misc_time[gpu_id] += fastlog(plI, bval_cutoff, TPB[0], num_SMs)
-
+                    misc_time[gpu_id] += fastlog(plI[gpu_id], bval_cutoff, TPB[0], num_SMs)
                 if "+" in sys.argv[4]:
                     try:
                         np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk), plI)
@@ -192,7 +194,8 @@ def simulate(model, e_data, nref, P, X, timepoints_per_ic, num_curves,
 
 
             # Calculate errors
-            err_sq_time[gpu_id] += prob(P[blk:blk+size], plI, values, std, np.ascontiguousarray(X[blk:blk+size, -1]), 
+
+            err_sq_time[gpu_id] += prob(P[blk:blk+size], plI[gpu_id], values, std, np.ascontiguousarray(X[blk:blk+size, -1]), 
                                         TPB[0], num_SMs)
         # END LOOP OVER BLOCKS
     # END LOOP OVER ICs
@@ -211,9 +214,9 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, e_data):
     misc_time = np.zeros(num_gpus)
 
     num_curves = len(init_params)
-    timepoints_per_ic = sim_params[3] // sim_params[4] + 1
-    for i in range(len(e_data[0])):
-        assert (len(e_data[0][i]) % timepoints_per_ic == 0), "Error: experiment {} data length not a multiple of points_per_ic".format(i+1)
+    #timepoints_per_ic = sim_params[3] // sim_params[4] + 1
+    #for i in range(len(e_data[0])):
+    #    assert (len(e_data[0][i]) % timepoints_per_ic == 0), "Error: experiment {} data length not a multiple of points_per_ic".format(i+1)
 
     N, P, X = make_grid(N, P, 0, refs, minX, maxX, minP)
 
@@ -222,10 +225,11 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, e_data):
     for nref in range(mc_refs):                            # Loop refinements
 
         threads = []
+        plI = [None for i in range(num_gpus)]
         for gpu_id in range(num_gpus):
             print("Starting thread {}".format(gpu_id))
-            thread = threading.Thread(target=simulate, args=(model, e_data, nref, P, X,
-                                      timepoints_per_ic, num_curves,sim_params[gpu_id], init_params, gpu_id, num_gpus,
+            thread = threading.Thread(target=simulate, args=(model, e_data, nref, P, X, plI,
+                                      num_curves,sim_params[gpu_id], init_params, gpu_id, num_gpus,
                                       solver_time, err_sq_time, misc_time))
             threads.append(thread)
             thread.start()
@@ -322,21 +326,21 @@ def get_initpoints(init_file, scale_f=1e-21):
 if __name__ == "__main__":
     # simPar
     #Time    = 250                                 # Final time (ns)
-    Time = 2000
+    #Time = 2000
     #Time = 131867*0.025
     Length = [311,2000,311,2000, 311, 2000]
-    Length  = 2000                            # Length (nm)
+    #Length  = 2000                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
     #T   = 4000
-    T = 80000
+    #T = 80000
     #T = 131867
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 5                                   # Convergence tolerance
     MAX = 1000                                  # Max iterations
-    pT = tuple(np.array(pT)*T//100)
-    simPar = [Length, Time, L, T, plT, pT, tol, MAX]
+    
+    simPar = [Length, -1, L, -1, plT, pT, tol, MAX]
     
     # iniPar and available modes
     # 'exp' - parameters a and l for a*np.exp(-x/l)
@@ -353,7 +357,7 @@ if __name__ == "__main__":
     unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0, 1])
     do_log = np.array([1,1,0,0,1,1,1,0,0,0,0])
 
-    GPU_GROUP_SIZE = 2 ** 11                  # Number of simulations assigned to GPU at a time - GPU has limited memory
+    GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
     num_gpus = 8
 
     ref1 = np.array([1,1,1,128,128,1,1,1,1,1])
@@ -365,8 +369,8 @@ if __name__ == "__main__":
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     mc_refs = 1
 
-    minX = np.array([1e8, 3e15, 20, 20, 1e-11, 1e-4, 1e-4, 1, 1, 10**-1, -1])
-    maxX = np.array([1e8, 3e15, 20, 20, 1e-9, 1e4, 1e4, 1500, 3000, 10**-1, 1])
+    minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 1e-4, 1e-4, 1, 1, 10**-1, 0])
+    maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 1e4, 1e4, 1500, 3000, 10**-1, 0])
     #minX = np.array([1e8, 1e8, 20, 0, 1e-11, 10, 10, 1, 871, 10**-1, 0])
     #maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 10, 10, 1500, 871, 10**-1, 0])
     #minX = np.array([1e8, 1e8, 20, 1e-10, 1e-11, 1, 1e4, 1, 1, 10**-1, -0.2])
@@ -384,7 +388,7 @@ if __name__ == "__main__":
 
     np.random.seed(42)
     RANDOM_SAMPLE = True
-    NUM_POINTS = 2 ** 14
+    NUM_POINTS = 2 ** 22
 
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
