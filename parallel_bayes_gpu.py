@@ -143,7 +143,7 @@ def simulate(model, e_data, nref, P, X, plI, num_curves,
         num_tsteps_needed = (num_observations-1)*sim_params[4]
         sim_params[3] = num_tsteps_needed
         sim_params[1] = times[-1]
-        sim_params[5] = tuple(np.array(pT)*sim_params[3]//100)
+        sim_params[5] = tuple(np.array(pT)*sim_params[4]*sim_params[3]//100)
 
         if gpu_id == 0: 
             print("Starting with values :{} \ncount: {}".format(values, len(values)))
@@ -329,7 +329,7 @@ if __name__ == "__main__":
     #Time = 2000
     #Time = 131867*0.025
     Length = [311,2000,311,2000, 311, 2000]
-    #Length  = 2000                            # Length (nm)
+    Length  = 2000                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
     #T   = 4000
@@ -355,7 +355,7 @@ if __name__ == "__main__":
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda, mag_offset]
     param_names = ["n0", "p0", "mun", "mup", "B", "Sf", "Sb", "taun", "taup", "lambda", "mag_offset"]
     unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0, 1])
-    do_log = np.array([1,1,0,0,1,1,1,0,0,0,0])
+    do_log = np.array([1,0,0,0,1,1,1,0,0,0,0])
 
     GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
     num_gpus = 8
@@ -381,7 +381,7 @@ if __name__ == "__main__":
     #maxX = np.array([1e8, 3e15, 20,20, 1e-9, 5e2, 10, 511, 871, 10**-1])
 
     LOADIN_PL = "load" in sys.argv[4]
-    OVERRIDE_EQUAL_MU = True
+    OVERRIDE_EQUAL_MU = False
     OVERRIDE_EQUAL_S = False
     LOG_PL = True
     NORMALIZE = False
