@@ -4,12 +4,18 @@
 Created on Mon Sep 21 21:33:18 2020
 @author: tladd
 """
-## Define constants
-eps0 = 8.854 * 1e-12 * 1e-9 # [C / V m] to {C / V nm}
-q = 1.0 # [e]
-q_C = 1.602e-19 # [C]
-kB = 8.61773e-5  # [eV / K]
+import csv
+from numba import cuda
+import threading
+import sys
+import time
 import numpy as np
+
+## Define constants
+#eps0 = 8.854 * 1e-12 * 1e-9 # [C / V m] to {C / V nm}
+#q = 1.0 # [e]
+#q_C = 1.602e-19 # [C]
+#kB = 8.61773e-5  # [eV / K]
 
 def indexGrid(N, refs):                        # Arrays of cell coordinates
     cN  = N.copy()                             # Copy of cell indexes
@@ -40,7 +46,7 @@ def refineGrid (N, ref):                       # Refine grid
     N   = np.add.outer(reN, N*siz)             # 2D array of indexes
     return N.flatten(order='F')                # Return flattened array
 
-def random_grid(minX, maxX, num_points, do_grid=False, refs=None):
+def random_grid(minX, maxX, do_log, num_points, do_grid=False, refs=None):
     num_params = len(minX)
     grid = np.empty((num_points, num_params))
     
@@ -83,10 +89,10 @@ def export_random_marP(X, P):
         np.save("{}_BAYRAN_{}.npy".format(wdir + out_filename, int(tf)), Pti)
     return
 
-def make_grid(N, P, nref, minX, maxX, minP=None, refs=None):
+def make_grid(N, P, minX, maxX, do_log, nref=None, minP=None, refs=None):
     if RANDOM_SAMPLE:
         N = np.arange(NUM_POINTS)
-        X = random_grid(minX, maxX, NUM_POINTS, do_grid=False, refs=refs)
+        X = random_grid(minX, maxX, do_log, NUM_POINTS, do_grid=False, refs=refs)
         print(len(X), "random points")
 
     else:
@@ -113,7 +119,7 @@ def make_grid(N, P, nref, minX, maxX, minP=None, refs=None):
         X[:,6] = X[:,5]
     return N, P, X
 
-def simulate(model, e_data, nref, P, X, plI, num_curves,
+def simulate(model, e_data, P, X, plI, num_curves,
              sim_params, init_params, gpu_id, num_gpus, solver_time, err_sq_time, misc_time):
     try:
         cuda.select_device(gpu_id)
@@ -203,7 +209,7 @@ def simulate(model, e_data, nref, P, X, plI, num_curves,
 
     return
 
-def bayes(model, N, P, minX, maxX, init_params, sim_params, e_data):        # Driver function
+def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data):        # Driver function
     global num_SMs
     global has_GPU
     global init_mode
@@ -219,26 +225,24 @@ def bayes(model, N, P, minX, maxX, init_params, sim_params, e_data):        # Dr
     #for i in range(len(e_data[0])):
     #    assert (len(e_data[0][i]) % timepoints_per_ic == 0), "Error: experiment {} data length not a multiple of points_per_ic".format(i+1)
 
-    N, P, X = make_grid(N, P, 0, minX, maxX)
+    N, P, X = make_grid(N, P, minX, maxX, do_log)
 
     sim_params = [list(sim_params) for i in range(num_gpus)]
 
-    for nref in range(mc_refs):                            # Loop refinements
+    threads = []
+    plI = [None for i in range(num_gpus)]
+    for gpu_id in range(num_gpus):
+        print("Starting thread {}".format(gpu_id))
+        thread = threading.Thread(target=simulate, args=(model, e_data, P, X, plI,
+                                  num_curves,sim_params[gpu_id], init_params, gpu_id, num_gpus,
+                                  solver_time, err_sq_time, misc_time))
+        threads.append(thread)
+        thread.start()
 
-        threads = []
-        plI = [None for i in range(num_gpus)]
-        for gpu_id in range(num_gpus):
-            print("Starting thread {}".format(gpu_id))
-            thread = threading.Thread(target=simulate, args=(model, e_data, nref, P, X, plI,
-                                      num_curves,sim_params[gpu_id], init_params, gpu_id, num_gpus,
-                                      solver_time, err_sq_time, misc_time))
-            threads.append(thread)
-            thread.start()
-
-        for gpu_id, thread in enumerate(threads):
-            print("Ending thread {}".format(gpu_id))
-            thread.join()
-            print("Thread {} closed".format(gpu_id))
+    for gpu_id, thread in enumerate(threads):
+        print("Ending thread {}".format(gpu_id))
+        thread.join()
+        print("Thread {} closed".format(gpu_id))
 
     print("Total tEvol time: {}, avg {}".format(solver_time, np.mean(solver_time)))
     print("Total err_sq time (temperatures and mag_offsets): {}, avg {}".format(err_sq_time, np.mean(err_sq_time)))
@@ -247,18 +251,16 @@ def bayes(model, N, P, minX, maxX, init_params, sim_params, e_data):        # Dr
 
 
 #-----------------------------------------------------------------------------#
-import csv
-from numba import cuda
-import threading
-import sys
-import time
-def get_data(exp_file, scale_f=1, sample_f=1):
+def get_data(exp_file, ic_flags, scale_f=1, sample_f=1):
     global bval_cutoff
     t = []
     PL = []
     uncertainty = []
     bval_cutoff = 10 * sys.float_info.min
     print("cutoff", bval_cutoff)
+
+    EARLY_CUT = ic_flags['time_cutoff']
+    SELECT = ic_flags['select_obs_sets']
     with open(exp_file, newline='') as file:
         eof = False
         next_t = []
@@ -316,7 +318,7 @@ def get_data(exp_file, scale_f=1, sample_f=1):
                 count = 0
 
             if not eof and not (count % sample_f):
-                if (EARLY_CUT and float(row[0]) > 5):
+                if (EARLY_CUT is not None and float(row[0]) > EARLY_CUT):
                     pass
                 else: 
                     next_t.append(float(row[0]))
@@ -325,12 +327,14 @@ def get_data(exp_file, scale_f=1, sample_f=1):
             
             count += 1
 
-    if SELECT is None:
-        return (t, PL, uncertainty)
-    else:
+    if SELECT is not None:
         return (np.array(t)[SELECT], np.array(PL)[SELECT], np.array(uncertainty)[SELECT])
+    else:
+        return (t, PL, uncertainty)
 
-def get_initpoints(init_file, scale_f=1e-21):
+def get_initpoints(init_file, ic_flags, scale_f=1e-21):
+    SELECT = ic_flags['select_obs_sets']
+
     with open(init_file, newline='') as file:
         ifstream = csv.reader(file)
         initpoints = []
@@ -342,3 +346,13 @@ def get_initpoints(init_file, scale_f=1e-21):
     if SELECT is not None:
         initpoints = np.array(initpoints)[SELECT]
     return np.array(initpoints, dtype=float) * scale_f
+
+def validate_ic_flags(ic_flags):
+    if ic_flags["time_cutoff"] is not None:
+        assert isinstance(ic_flags["time_cutoff"], (float, int)), "invalid time cutoff"
+        assert ic_flags["time_cutoff"] > 0, "invalid time cutoff"
+
+    if ic_flags["select_obs_sets"] is not None:
+        assert isinstance(ic_flags["select_obs_sets"], list), "invalid observation set selection"
+
+    return
