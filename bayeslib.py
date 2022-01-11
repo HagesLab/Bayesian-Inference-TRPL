@@ -260,7 +260,7 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_
 
 
 #-----------------------------------------------------------------------------#
-def get_data(exp_file, ic_flags, sim_flags, scale_f=1e-23, sample_f=1):
+def get_data(exp_file, ic_flags, sim_flags, scale_f=1e-23):
     # 1e-23 [cm^-2 s^-1] to [nm^-2 ns^-1]
     global bval_cutoff
     t = []
@@ -332,7 +332,7 @@ def get_data(exp_file, ic_flags, sim_flags, scale_f=1e-23, sample_f=1):
 
                 count = 0
 
-            if not eof and not (count % sample_f):
+            if not eof:
                 if (EARLY_CUT is not None and float(row[0]) > EARLY_CUT):
                     pass
                 else: 
