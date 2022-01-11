@@ -128,6 +128,7 @@ def simulate(model, e_data, nref, P, X, plI, num_curves,
     elif isinstance(sim_params[0], list):
         thicknesses = list(sim_params[0])
     
+
     for ic_num in range(num_curves):
         times = e_data[0][ic_num]
         values = e_data[1][ic_num]
@@ -178,8 +179,8 @@ def simulate(model, e_data, nref, P, X, plI, num_curves,
                     misc_time[gpu_id] += fastlog(plI[gpu_id], bval_cutoff, TPB[0], num_SMs)
                 if "+" in sys.argv[4]:
                     try:
-                        np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk), plI)
-                        print("Saved plI of size ", plI.shape)
+                        np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk), plI[0])
+                        print("Saved plI of size ", plI[0].shape)
                     except Exception as e:
                         print("Warning: save failed\n", e)
 
@@ -258,7 +259,6 @@ def get_data(exp_file, scale_f=1, sample_f=1):
     uncertainty = []
     bval_cutoff = 10 * sys.float_info.min
     print("cutoff", bval_cutoff)
-
     with open(exp_file, newline='') as file:
         eof = False
         next_t = []
@@ -270,12 +270,24 @@ def get_data(exp_file, scale_f=1, sample_f=1):
         for row in ifstream:
             if row[0] == "END":
                 eof = True
-            if eof or (float(row[0]) == 0 and len(next_t)):
+                finished = True
+            else:
+                finished = (float(row[0]) == 0 and len(next_t))
+
+            if eof or finished:
                 # t=0 means we finished reading the current PL curve - preprocess and package it
                 #dataset_end_inds.append(dataset_end_inds[-1] + count)
                 next_t = np.array(next_t)
-                next_PL = np.array(next_PL) * scale_f
+                if ADD_NOISE:
+                    next_PL = (np.array(next_PL) + NOISE_LEVEL*np.random.normal(0, 1, len(next_PL))) * scale_f
+
+                else:
+                    next_PL = np.array(next_PL) * scale_f
+
                 next_uncertainty = np.array(next_uncertainty) * scale_f
+
+                if NORMALIZE:
+                    next_PL /= max(next_PL)
 
                 print("PL curve #{} finished reading".format(len(t)+1))
                 print("Number of points: {}".format(len(next_t)))
@@ -304,13 +316,19 @@ def get_data(exp_file, scale_f=1, sample_f=1):
                 count = 0
 
             if not eof and not (count % sample_f):
-                next_t.append(float(row[0]))
-                next_PL.append(float(row[1]))
-                next_uncertainty.append(float(row[2]))
+                if (EARLY_CUT and float(row[0]) > 5):
+                    pass
+                else: 
+                    next_t.append(float(row[0]))
+                    next_PL.append(float(row[1]))
+                    next_uncertainty.append(float(row[2]))
             
             count += 1
 
-    return (t, PL, uncertainty)
+    if SELECT is None:
+        return (t, PL, uncertainty)
+    else:
+        return (np.array(t)[SELECT], np.array(PL)[SELECT], np.array(uncertainty)[SELECT])
 
 def get_initpoints(init_file, scale_f=1e-21):
     with open(init_file, newline='') as file:
@@ -320,25 +338,25 @@ def get_initpoints(init_file, scale_f=1e-21):
             if len(row) == 0: continue
             assert len(row) == L, "Error: length of initial condition does not match simPar: L\n IC:{}, L:{}".format(len(row), L)
             initpoints.append(row)
-
+        
+    if SELECT is not None:
+        initpoints = np.array(initpoints)[SELECT]
     return np.array(initpoints, dtype=float) * scale_f
 
 if __name__ == "__main__":
+    EARLY_CUT = False
+    SELECT = None
+    print("Early:", EARLY_CUT)
+    print("Select:", SELECT)
     # simPar
-    #Time    = 250                                 # Final time (ns)
-    #Time = 2000
-    #Time = 131867*0.025
-    Length = [311,2000,311,2000, 311, 2000]
+    #Length = [311,2000,311,2000, 311, 2000]
     Length  = 2000                            # Length (nm)
     lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
-    #T   = 4000
-    #T = 80000
-    #T = 131867
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
-    tol = 5                                   # Convergence tolerance
-    MAX = 1000                                  # Max iterations
+    tol = 7                                   # Convergence tolerance
+    MAX = 10000                                  # Max iterations
     
     simPar = [Length, -1, L, -1, plT, pT, tol, MAX]
     
@@ -349,13 +367,13 @@ if __name__ == "__main__":
     #a  = 1e18/(1e7)**3                        # Amplitude
     #l  = 100                                  # Length scale [nm]
     #iniPar = np.array([[a, l]])
-    iniPar = get_initpoints(sys.argv[2])
+    iniPar = get_initpoints(r"/blue/c.hages/bay_inputs/{}".format(sys.argv[2]))
 
     # This code follows a strict order of parameters:
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda, mag_offset]
     param_names = ["n0", "p0", "mun", "mup", "B", "Sf", "Sb", "taun", "taup", "lambda", "mag_offset"]
     unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0, 1])
-    do_log = np.array([1,0,0,0,1,1,1,0,0,0,0])
+    do_log = np.array([1,1,0,0,1,1,1,0,0,1,0])
 
     GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
     num_gpus = 8
@@ -369,14 +387,23 @@ if __name__ == "__main__":
     refs = np.array([ref1])#, ref2, ref3])                         # Refinements
     mc_refs = 1
 
-    minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 1e-4, 1e-4, 1, 1, 10**-1, 0])
-    maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 1e4, 1e4, 1500, 3000, 10**-1, 0])
-    #minX = np.array([1e8, 1e8, 20, 0, 1e-11, 10, 10, 1, 871, 10**-1, 0])
-    #maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 10, 10, 1500, 871, 10**-1, 0])
-    #minX = np.array([1e8, 1e8, 20, 1e-10, 1e-11, 1, 1e4, 1, 1, 10**-1, -0.2])
-    #maxX = np.array([1e8, 1e18, 20, 100, 1e-9, 1e5, 1e4, 1500, 1500, 10**-1, 0.2])
-    #minX = np.array([1e8, 1e15, 10, 10, 1e-11, 1e3, 1e-6, 1, 1, 10**-1])
-    #maxX = np.array([1e8, 1e15, 10, 10, 1e-9, 2e5, 1e-6, 100, 100, 10**-1])
+    #minX = np.array([1e8, 1e8, 0, 0, 1e-11, 1e-4, 1e-4, 1, 1, 10**-1, 0])
+    #maxX = np.array([1e8, 1e18, 100, 100, 1e-9, 1e4, 1e4, 1500, 3000, 10**-1, 0])
+
+    # After mu, p0
+    #minX = np.array([1e8, 3e15, 20, 20, 1e-12, 1e-4, 1e-4, 1, 1, 10**-1, -1])
+    #maxX = np.array([1e8, 3e15, 20, 20, 1e-8, 1e5, 1e5, 1000, 1000, 10**-1, 1])
+
+    # SRH and Surface only
+    minX = np.array([1e8, 3e15, 4000, 4000, 4.8e-11, 1, 1, 1, 1, 10**-1, 0])
+    maxX = np.array([1e8, 3e15, 4000, 4000, 4.8e-11, 1e5, 1e5, 1500, 3000, 10**-1, 0])
+
+    # Mobiltiy only
+    #minX = np.array([1e8, 3e15, 1, 1, 4.8e-11, 1000, 1000, 511, 871, 0.1, 0])
+    #maxX = np.array([1e8, 3e15, 100, 100, 4.8e-11, 1000, 1000, 511, 871, 0.1, 0])
+
+    #minX = np.array([1e8, 3e15, 20, 20, 1e-11, 10, 10, 511, 871, 10**-1, 0])
+    #maxX = np.array([1e8, 3e15, 20, 20, 1e-9, 10, 10, 511, 871, 10**-1, 0])
     #minX = np.array([1e8, 3e15, 20,20, 1e-11, 1e-6, 10, 511, 871, 10**-1])
     #maxX = np.array([1e8, 3e15, 20,20, 1e-9, 5e2, 10, 511, 871, 10**-1])
 
@@ -385,10 +412,12 @@ if __name__ == "__main__":
     OVERRIDE_EQUAL_S = False
     LOG_PL = True
     NORMALIZE = False
-
+    ADD_NOISE = True
+    NOISE_LEVEL = 1e15
+    print("Noise added: {} {}".format(ADD_NOISE, np.log10(NOISE_LEVEL)))
     np.random.seed(42)
     RANDOM_SAMPLE = True
-    NUM_POINTS = 2 ** 22
+    NUM_POINTS = 2 ** 23
 
     scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
     sample_factor = 1
@@ -398,9 +427,9 @@ if __name__ == "__main__":
     N    = np.array([0])                              # Initial N
     P    = None                            # Initial P
 
-    experimental_data_filename = sys.argv[1]
+    experimental_data_filename = r"/blue/c.hages/bay_inputs/{}".format(sys.argv[1])
     out_filename = sys.argv[3]
-    wdir = r"/blue/c.hages/cfai2304/{}/".format(out_filename)
+    wdir = r"/blue/c.hages/bay_outputs/{}/".format(out_filename)
     
     # Pre-checks
     try:
@@ -440,6 +469,8 @@ if __name__ == "__main__":
             for i in range(num_params):
                 print("{}: {}".format(param_names[i], refs[:,i]))        
         e_data = get_data(experimental_data_filename, scale_f=scale_f, sample_f = sample_factor) 
+        assert len(iniPar) == len(e_data[0]), "Num. ICs ({}) doesn't match num. datasets ({})".format(len(iniPar), len(e_data[0]))
+        print("\nInitial condition - {}".format(iniPar))
         print("\nExperimental data - {}".format(experimental_data_filename))
         print("Sample factor: {}".format(sample_factor))
         print(e_data)
