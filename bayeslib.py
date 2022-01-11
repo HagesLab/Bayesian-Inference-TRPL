@@ -89,7 +89,12 @@ def export_random_marP(X, P):
         np.save("{}_BAYRAN_{}.npy".format(wdir + out_filename, int(tf)), Pti)
     return
 
-def make_grid(N, P, minX, maxX, do_log, nref=None, minP=None, refs=None):
+def make_grid(N, P, minX, maxX, do_log, sim_flags, nref=None, minP=None, refs=None):
+    OVERRIDE_EQUAL_MU = sim_flags["override_equal_mu"]
+    OVERRIDE_EQUAL_S = sim_flags["override_equal_s"]
+    RANDOM_SAMPLE = sim_flags["random_sample"]
+    NUM_POINTS = sim_flags["num_points"]
+
     if RANDOM_SAMPLE:
         N = np.arange(NUM_POINTS)
         X = random_grid(minX, maxX, do_log, NUM_POINTS, do_grid=False, refs=refs)
@@ -120,11 +125,14 @@ def make_grid(N, P, minX, maxX, do_log, nref=None, minP=None, refs=None):
     return N, P, X
 
 def simulate(model, e_data, P, X, plI, num_curves,
-             sim_params, init_params, gpu_info, gpu_id, solver_time, err_sq_time, misc_time):
+             sim_params, init_params, sim_flags, gpu_info, gpu_id, solver_time, err_sq_time, misc_time):
 
     GPU_GROUP_SIZE = gpu_info["sims_per_gpu"]
     num_gpus = gpu_info["num_gpus"]
-    
+    LOADIN_PL = sim_flags["load_PL_from_file"]
+    LOG_PL = sim_flags["log_pl"]
+    NORMALIZE = sim_flags["self_normalize"]
+
     try:
         cuda.select_device(gpu_id)
     except IndexError:
@@ -190,7 +198,7 @@ def simulate(model, e_data, P, X, plI, num_curves,
                 if "+" in sys.argv[4]:
                     try:
                         np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk), plI[0])
-                        print("Saved plI of size ", plI[0].shape)
+                       print("Saved plI of size ", plI[0].shape)
                     except Exception as e:
                         print("Warning: save failed\n", e)
 
@@ -213,7 +221,7 @@ def simulate(model, e_data, P, X, plI, num_curves,
 
     return
 
-def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, gpu_info):        # Driver function
+def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_flags, gpu_info):        # Driver function
     global num_SMs
     global has_GPU
     num_gpus = gpu_info["num_gpus"]
@@ -226,7 +234,7 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, gpu_
     #for i in range(len(e_data[0])):
     #    assert (len(e_data[0][i]) % timepoints_per_ic == 0), "Error: experiment {} data length not a multiple of points_per_ic".format(i+1)
 
-    N, P, X = make_grid(N, P, minX, maxX, do_log)
+    N, P, X = make_grid(N, P, minX, maxX, do_log, sim_flags)
 
     sim_params = [list(sim_params) for i in range(num_gpus)]
 
@@ -235,7 +243,7 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, gpu_
     for gpu_id in range(num_gpus):
         print("Starting thread {}".format(gpu_id))
         thread = threading.Thread(target=simulate, args=(model, e_data, P, X, plI,
-                                  num_curves,sim_params[gpu_id], init_params, gpu_info. gpu_id, num_gpus,
+                                  num_curves,sim_params[gpu_id], init_params, sim_flags, gpu_info, gpu_id, num_gpus,
                                   solver_time, err_sq_time, misc_time))
         threads.append(thread)
         thread.start()
@@ -252,7 +260,8 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, gpu_
 
 
 #-----------------------------------------------------------------------------#
-def get_data(exp_file, ic_flags, scale_f=1, sample_f=1):
+def get_data(exp_file, ic_flags, sim_flags, scale_f=1e-23, sample_f=1):
+    # 1e-23 [cm^-2 s^-1] to [nm^-2 ns^-1]
     global bval_cutoff
     t = []
     PL = []
@@ -262,6 +271,11 @@ def get_data(exp_file, ic_flags, scale_f=1, sample_f=1):
 
     EARLY_CUT = ic_flags['time_cutoff']
     SELECT = ic_flags['select_obs_sets']
+    NOISE_LEVEL = ic_flags['noise_level']
+
+    LOG_PL = sim_flags['log_pl']
+    NORMALIZE = sim_flags["self_normalize"]
+
     with open(exp_file, newline='') as file:
         eof = False
         next_t = []
@@ -281,7 +295,7 @@ def get_data(exp_file, ic_flags, scale_f=1, sample_f=1):
                 # t=0 means we finished reading the current PL curve - preprocess and package it
                 #dataset_end_inds.append(dataset_end_inds[-1] + count)
                 next_t = np.array(next_t)
-                if ADD_NOISE:
+                if NOISE_LEVEL is not None:
                     next_PL = (np.array(next_PL) + NOISE_LEVEL*np.random.normal(0, 1, len(next_PL))) * scale_f
 
                 else:
@@ -356,6 +370,8 @@ def validate_ic_flags(ic_flags):
     if ic_flags["select_obs_sets"] is not None:
         assert isinstance(ic_flags["select_obs_sets"], list), "invalid observation set selection"
 
+    if ic_flags["noise_level"] is not None:
+        assert isinstance(ic_flags["noise_level"], (float, int)), "invalid noise level"
     return
 
 def validate_gpu_info(gpu_info):
