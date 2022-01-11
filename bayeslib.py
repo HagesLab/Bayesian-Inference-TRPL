@@ -120,7 +120,11 @@ def make_grid(N, P, minX, maxX, do_log, nref=None, minP=None, refs=None):
     return N, P, X
 
 def simulate(model, e_data, P, X, plI, num_curves,
-             sim_params, init_params, gpu_id, num_gpus, solver_time, err_sq_time, misc_time):
+             sim_params, init_params, gpu_info, gpu_id, solver_time, err_sq_time, misc_time):
+
+    GPU_GROUP_SIZE = gpu_info["sims_per_gpu"]
+    num_gpus = gpu_info["num_gpus"]
+    
     try:
         cuda.select_device(gpu_id)
     except IndexError:
@@ -171,8 +175,8 @@ def simulate(model, e_data, P, X, plI, num_curves,
 
                 if has_GPU:
                     solver_time[gpu_id] += model(plI[gpu_id], plN, plP, plE, X[blk:blk+size, :-1], 
-                                                 sim_params, init_params[ic_num], 
-                                                 TPB,8*num_SMs, max_sims_per_block, init_mode=init_mode)
+                                                 sim_params, init_params[ic_num],
+                                                 TPB,8*num_SMs, max_sims_per_block, init_mode="points")
                 else:
                     plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
         
@@ -209,13 +213,10 @@ def simulate(model, e_data, P, X, plI, num_curves,
 
     return
 
-def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data):        # Driver function
+def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, gpu_info):        # Driver function
     global num_SMs
     global has_GPU
-    global init_mode
-    global GPU_GROUP_SIZE
-    global num_gpus
-
+    num_gpus = gpu_info["num_gpus"]
     solver_time = np.zeros(num_gpus)
     err_sq_time = np.zeros(num_gpus)
     misc_time = np.zeros(num_gpus)
@@ -234,7 +235,7 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data):    
     for gpu_id in range(num_gpus):
         print("Starting thread {}".format(gpu_id))
         thread = threading.Thread(target=simulate, args=(model, e_data, P, X, plI,
-                                  num_curves,sim_params[gpu_id], init_params, gpu_id, num_gpus,
+                                  num_curves,sim_params[gpu_id], init_params, gpu_info. gpu_id, num_gpus,
                                   solver_time, err_sq_time, misc_time))
         threads.append(thread)
         thread.start()
@@ -354,5 +355,15 @@ def validate_ic_flags(ic_flags):
 
     if ic_flags["select_obs_sets"] is not None:
         assert isinstance(ic_flags["select_obs_sets"], list), "invalid observation set selection"
+
+    return
+
+def validate_gpu_info(gpu_info):
+    assert isinstance(gpu_info["num_gpus"], int), "invalid num_gpus"
+    assert gpu_info["num_gpus"] > 0, "invalid num_gpus"
+    assert gpu_info["num_gpus"] <= 8 "too many gpus"
+
+    assert isinstance(gpu_info["sims_per_gpu"], int), "invalid sims per gpu"
+    assert gpu_info["sims_per_gpu"] > 0, "invalid sims per gpu"
 
     return
