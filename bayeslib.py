@@ -48,18 +48,18 @@ def random_grid(minX, maxX, num_points, do_grid=False, refs=None):
         if minX[i] == maxX[i]:
             grid[:,i] = minX[i]
         else:
-            if do_grid:
-                ind = np.arange(refs[i])
-                if do_log[i]:
-                    possible_vals = minX[i] * (maxX[i]/minX[i]) ** ((ind+0.5) / refs[i])
-                else:
-                    possible_vals = minX[i] + (maxX[i]-minX[i]) * (ind+0.5) / refs[i]
-                grid[:,i] = np.random.choice(possible_vals, size=(len(grid[:,i],)))
+            #if do_grid:
+            #    ind = np.arange(refs[i])
+            #    if do_log[i]:
+            #        possible_vals = minX[i] * (maxX[i]/minX[i]) ** ((ind+0.5) / refs[i])
+            #    else:
+            #        possible_vals = minX[i] + (maxX[i]-minX[i]) * (ind+0.5) / refs[i]
+            #    grid[:,i] = np.random.choice(possible_vals, size=(len(grid[:,i],)))
+            #else:
+            if do_log[i]:
+                grid[:,i] = 10 ** np.random.uniform(np.log10(minX[i]), np.log10(maxX[i]), (num_points,))
             else:
-                if do_log[i]:
-                    grid[:,i] = 10 ** np.random.uniform(np.log10(minX[i]), np.log10(maxX[i]), (num_points,))
-                else:
-                    grid[:,i] = np.random.uniform(minX[i], maxX[i], (num_points,))
+                grid[:,i] = np.random.uniform(minX[i], maxX[i], (num_points,))
             
     return grid
 
@@ -83,15 +83,15 @@ def export_random_marP(X, P):
         np.save("{}_BAYRAN_{}.npy".format(wdir + out_filename, int(tf)), Pti)
     return
 
-def make_grid(N, P, nref, refs, minX, maxX, minP):
+def make_grid(N, P, nref, minX, maxX, minP=None, refs=None):
     if RANDOM_SAMPLE:
         N = np.arange(NUM_POINTS)
         X = random_grid(minX, maxX, NUM_POINTS, do_grid=False, refs=refs)
         print(len(X), "random points")
 
     else:
-        if P is not None:
-            N   = N[np.where(np.sum(np.mean(P, axis=0), axis=1) > minP[nref])] # P < minP - avg over tfs, sum over mag
+        #if P is not None:
+        #    N   = N[np.where(np.sum(np.mean(P, axis=0), axis=1) > minP[nref])] # P < minP - avg over tfs, sum over mag
         N   = refineGrid(N, refs[nref])                      # Refine grid
         Np  = np.prod(refs[nref])                            # Params per set
         print("ref level, N: ", nref, len(N))
@@ -203,7 +203,7 @@ def simulate(model, e_data, nref, P, X, plI, num_curves,
 
     return
 
-def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, e_data):        # Driver function
+def bayes(model, N, P, minX, maxX, init_params, sim_params, e_data):        # Driver function
     global num_SMs
     global has_GPU
     global init_mode
@@ -219,7 +219,7 @@ def bayes(model, N, P, refs, minX, maxX, init_params, sim_params, minP, e_data):
     #for i in range(len(e_data[0])):
     #    assert (len(e_data[0][i]) % timepoints_per_ic == 0), "Error: experiment {} data length not a multiple of points_per_ic".format(i+1)
 
-    N, P, X = make_grid(N, P, 0, refs, minX, maxX, minP)
+    N, P, X = make_grid(N, P, 0, minX, maxX)
 
     sim_params = [list(sim_params) for i in range(num_gpus)]
 
@@ -342,197 +342,3 @@ def get_initpoints(init_file, scale_f=1e-21):
     if SELECT is not None:
         initpoints = np.array(initpoints)[SELECT]
     return np.array(initpoints, dtype=float) * scale_f
-
-if __name__ == "__main__":
-    EARLY_CUT = False
-    SELECT = None
-    print("Early:", EARLY_CUT)
-    print("Select:", SELECT)
-    # simPar
-    #Length = [311,2000,311,2000, 311, 2000]
-    Length  = 2000                            # Length (nm)
-    lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
-    L   = 2 ** 7                                # Spatial points
-    plT = 1                                  # Set PL interval (dt)
-    pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
-    tol = 7                                   # Convergence tolerance
-    MAX = 10000                                  # Max iterations
-    
-    simPar = [Length, -1, L, -1, plT, pT, tol, MAX]
-    
-    # iniPar and available modes
-    # 'exp' - parameters a and l for a*np.exp(-x/l)
-    # 'points' - direct list of dN [cm^-3] points as csv file read using get_initpoints()
-    init_mode = "points"
-    #a  = 1e18/(1e7)**3                        # Amplitude
-    #l  = 100                                  # Length scale [nm]
-    #iniPar = np.array([[a, l]])
-    iniPar = get_initpoints(r"/blue/c.hages/bay_inputs/{}".format(sys.argv[2]))
-
-    # This code follows a strict order of parameters:
-    # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda, mag_offset]
-    param_names = ["n0", "p0", "mun", "mup", "B", "Sf", "Sb", "taun", "taup", "lambda", "mag_offset"]
-    unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9),(1e7)/(1e9),(1e7)/(1e9),1,1,lambda0, 1])
-    do_log = np.array([1,1,0,0,1,1,1,0,0,1,0])
-
-    GPU_GROUP_SIZE = 2 ** 13                  # Number of simulations assigned to GPU at a time - GPU has limited memory
-    num_gpus = 8
-
-    ref1 = np.array([1,1,1,128,128,1,1,1,1,1])
-    ref2 = np.array([1,24,1,1,24,24,1,24,24,1])
-    ref3 = np.array([1,1,1,1,16,16,1,16,16,1])
-    ref4 = np.array([1,1,1,1,1,1,1,32,1,1])
-    #ref3 = np.array([1,1,1,8,8,1,1,8,8,1])
-    ref5 = np.array([1,8,1,4,8,8,1,8,8,1])
-    refs = np.array([ref1])#, ref2, ref3])                         # Refinements
-    mc_refs = 1
-
-    #minX = np.array([1e8, 1e8, 0, 0, 1e-11, 1e-4, 1e-4, 1, 1, 10**-1, 0])
-    #maxX = np.array([1e8, 1e18, 100, 100, 1e-9, 1e4, 1e4, 1500, 3000, 10**-1, 0])
-
-    # After mu, p0
-    #minX = np.array([1e8, 3e15, 20, 20, 1e-12, 1e-4, 1e-4, 1, 1, 10**-1, -1])
-    #maxX = np.array([1e8, 3e15, 20, 20, 1e-8, 1e5, 1e5, 1000, 1000, 10**-1, 1])
-
-    # SRH and Surface only
-    minX = np.array([1e8, 3e15, 4000, 4000, 4.8e-11, 1, 1, 1, 1, 10**-1, 0])
-    maxX = np.array([1e8, 3e15, 4000, 4000, 4.8e-11, 1e5, 1e5, 1500, 3000, 10**-1, 0])
-
-    # Mobiltiy only
-    #minX = np.array([1e8, 3e15, 1, 1, 4.8e-11, 1000, 1000, 511, 871, 0.1, 0])
-    #maxX = np.array([1e8, 3e15, 100, 100, 4.8e-11, 1000, 1000, 511, 871, 0.1, 0])
-
-    #minX = np.array([1e8, 3e15, 20, 20, 1e-11, 10, 10, 511, 871, 10**-1, 0])
-    #maxX = np.array([1e8, 3e15, 20, 20, 1e-9, 10, 10, 511, 871, 10**-1, 0])
-    #minX = np.array([1e8, 3e15, 20,20, 1e-11, 1e-6, 10, 511, 871, 10**-1])
-    #maxX = np.array([1e8, 3e15, 20,20, 1e-9, 5e2, 10, 511, 871, 10**-1])
-
-    LOADIN_PL = "load" in sys.argv[4]
-    OVERRIDE_EQUAL_MU = False
-    OVERRIDE_EQUAL_S = False
-    LOG_PL = True
-    NORMALIZE = False
-    ADD_NOISE = True
-    NOISE_LEVEL = 1e15
-    print("Noise added: {} {}".format(ADD_NOISE, np.log10(NOISE_LEVEL)))
-    np.random.seed(42)
-    RANDOM_SAMPLE = True
-    NUM_POINTS = 2 ** 17
-
-    scale_f = 1e-23 # [phot/cm^2 s] to [phot/nm^2 ns]
-    sample_factor = 1
-    P_thr = float(np.prod(refs[0])) ** -1 * 2                 # Threshold P
-    minP = np.array([0] + [P_thr for i in range(len(refs) - 1)])
-
-    N    = np.array([0])                              # Initial N
-    P    = None                            # Initial P
-
-    experimental_data_filename = r"/blue/c.hages/bay_inputs/{}".format(sys.argv[1])
-    out_filename = sys.argv[3]
-    wdir = r"/blue/c.hages/bay_outputs/{}/".format(out_filename)
-    
-    # Pre-checks
-    try:
-        num_params = len(param_names)
-        assert (len(unit_conversions) == num_params), "Unit conversion array is missing entries"
-        assert (len(do_log) == num_params), "do_log mask is missing values"
-        assert (len(minX) == num_params), "Missing min param values"
-        assert (len(maxX) == num_params), "Missing max param values"  
-        assert all(minX <= maxX), "Min params larger than max params"
-        if OVERRIDE_EQUAL_MU:
-            for ref in refs:
-                assert ref[2] == 1, "Equal mu override is on but mu_n is being subdivided"
-
-        if not RANDOM_SAMPLE:
-            for i in range(len(refs[0])):
-                if not refs[0,i] == 1:
-                    assert not (minX[i] == maxX[i]), "{} is subdivided but min val == max val".format(param_names[i])
-                else:
-                    assert (minX[i] == maxX[i]), "{} is not subdivided but min val != max val".format(param_names[i])
-        # TODO: Additional checks involving refs
-            
-        print("Starting simulations with the following parameters:")
-        print("{} iterations".format(mc_refs))
-        print("Log PL: {}".format(LOG_PL))
-        print("Equal mu override: {}".format(OVERRIDE_EQUAL_MU))
-        print("Equal Sf=Sb override: {}".format(OVERRIDE_EQUAL_S))
-        print("Normalize all curves: {}".format(NORMALIZE))
-        print("Lengths: {}".format(Length))
-        for i in range(num_params):
-            if minX[i] == maxX[i]:
-                print("{}: {}".format(param_names[i], minX[i]))
-                
-            else:
-                print("{}: {} to {} {}".format(param_names[i], minX[i], maxX[i], "log" if do_log[i] else "linear"))
-        if not RANDOM_SAMPLE:
-            print("Refinement levels:")
-            for i in range(num_params):
-                print("{}: {}".format(param_names[i], refs[:,i]))        
-        e_data = get_data(experimental_data_filename, scale_f=scale_f, sample_f = sample_factor) 
-        assert len(iniPar) == len(e_data[0]), "Num. ICs ({}) doesn't match num. datasets ({})".format(len(iniPar), len(e_data[0]))
-        print("\nInitial condition - {}".format(iniPar))
-        print("\nExperimental data - {}".format(experimental_data_filename))
-        print("Sample factor: {}".format(sample_factor))
-        print(e_data)
-        print("Output: {}".format(out_filename))
-        try:
-            print("Detecting GPU...")
-            has_GPU = cuda.detect()
-        except Exception as e:
-            print(e)
-            has_GPU = False
-
-        if has_GPU: 
-            device = cuda.get_current_device()
-            num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
-            TPB = (2 ** 7,)
-            max_sims_per_block = 3           # Maximum of 6 due to shared memory limit
-            from pvSimPCR import pvSim
-            from probs import prob, fastlog
-        else:
-            print("No GPU detected - reverting to CPU simulation")
-            raise NotImplementedError
-            num_SMs = -1
-            from pvSim import pvSim
-
-    except Exception as oops:
-        print(oops)
-        sys.exit(0)
-        
-    minX *= unit_conversions
-    maxX *= unit_conversions
-
-    import time
-    clock0 = time.time()
-    N, P, X = bayes(pvSim, N, P, refs, minX, maxX, iniPar, simPar, minP, e_data)
-    print("Bayesim took {} s".format(time.time() - clock0))
-
-    minX /= unit_conversions
-    maxX /= unit_conversions
-    X /= unit_conversions
-
-    try:
-        import os
-        print("Creating dir {}".format(out_filename))
-        os.mkdir(wdir)
-    except FileExistsError:
-        print("{} dir already exists".format(out_filename))
-    clock0 = time.time()
-
-    try:
-        print("Writing to /blue:")
-        np.save("{}_BAYRAN_P.npy".format(wdir + out_filename), P)
-        np.save("{}_BAYRAN_X.npy".format(wdir + out_filename), X)
-
-        #export_random_marP(X, P)
-    except Exception as e:
-        print(e)
-        print("Write failed; rewriting to backup location /home:")
-        wdir = r"/home/cfai2304/super_bayes/"
-        np.save("{}_BAYRAN_P.npy".format(wdir + out_filename), P)
-        np.save("{}_BAYRAN_X.npy".format(wdir + out_filename), X)
-
-        #export_random_marP(X, P)
-
-    #maxP(N, P, X, refs, minX, maxX)
-    print("Export took {}".format(time.time() - clock0))
