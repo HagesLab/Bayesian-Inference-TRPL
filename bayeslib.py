@@ -11,7 +11,6 @@ import sys
 import time
 import numpy as np
 
-from pvSimPCR import pvSim
 from probs import prob, fastlog
 ## Define constants
 #eps0 = 8.854 * 1e-12 * 1e-9 # [C / V m] to {C / V nm}
@@ -167,7 +166,7 @@ def simulate(model, e_data, P, X, plI, num_curves,
         num_tsteps_needed = (num_observations-1)*sim_params[4]
         sim_params[3] = num_tsteps_needed
         sim_params[1] = times[-1]
-        sim_params[5] = tuple(np.array(pT)*sim_params[4]*sim_params[3]//100)
+        sim_params[5] = tuple(np.array(sim_params[5])*sim_params[4]*sim_params[3]//100)
 
         if gpu_id == 0: 
             print("Starting with values :{} \ncount: {}".format(values, len(values)))
@@ -203,7 +202,7 @@ def simulate(model, e_data, P, X, plI, num_curves,
                 if "+" in sys.argv[4]:
                     try:
                         np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk), plI[0])
-                       print("Saved plI of size ", plI[0].shape)
+                        print("Saved plI of size ", plI[0].shape)
                     except Exception as e:
                         print("Warning: save failed\n", e)
 
@@ -246,7 +245,7 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_
     for gpu_id in range(num_gpus):
         print("Starting thread {}".format(gpu_id))
         thread = threading.Thread(target=simulate, args=(model, e_data, P, X, plI,
-                                  num_curves,sim_params[gpu_id], init_params, sim_flags, gpu_info, gpu_id, num_gpus,
+                                  num_curves,sim_params[gpu_id], init_params, sim_flags, gpu_info, gpu_id,
                                   solver_time, err_sq_time, misc_time))
         threads.append(thread)
         thread.start()
@@ -358,12 +357,16 @@ def get_initpoints(init_file, ic_flags, scale_f=1e-21):
         initpoints = []
         for row in ifstream:
             if len(row) == 0: continue
-            assert len(row) == L, "Error: length of initial condition does not match simPar: L\n IC:{}, L:{}".format(len(row), L)
             initpoints.append(row)
         
     if SELECT is not None:
         initpoints = np.array(initpoints)[SELECT]
     return np.array(initpoints, dtype=float) * scale_f
+
+def validate_IC(ics, L):
+    for ic in ics:
+        assert len(ic) == L, "Error: IC length:{}, declared L:{}".format(len(ic), L)
+    return
 
 def validate_ic_flags(ic_flags):
     if ic_flags["time_cutoff"] is not None:
@@ -380,7 +383,7 @@ def validate_ic_flags(ic_flags):
 def validate_gpu_info(gpu_info):
     assert isinstance(gpu_info["num_gpus"], int), "invalid num_gpus"
     assert gpu_info["num_gpus"] > 0, "invalid num_gpus"
-    assert gpu_info["num_gpus"] <= 8 "too many gpus"
+    assert gpu_info["num_gpus"] <= 8, "too many gpus"
 
     assert isinstance(gpu_info["sims_per_gpu"], int), "invalid sims per gpu"
     assert gpu_info["sims_per_gpu"] > 0, "invalid sims per gpu"

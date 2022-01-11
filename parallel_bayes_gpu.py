@@ -5,18 +5,27 @@ from time import perf_counter
 import sys
 import numpy as np
 
-from bayeslib import bayes, get_initpoints, get_data, validate_ic_flags, validate_gpu_info
+from bayeslib import bayes, get_initpoints, get_data, validate_ic_flags, validate_gpu_info, validate_IC
+from pvSimPCR import pvSim
 
+lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
+param_names = ["n0", "p0", "mun", "mup", "B", "Sf", "Sb", "taun", "taup", "lambda", "mag_offset"]
+unit_conversions = np.array([(1e7)**-3,(1e7)**-3,
+                             (1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,
+                             (1e7)**3/(1e9),
+                             (1e7)/(1e9),(1e7)/(1e9),
+                             1,1,
+                             lambda0, 1])
+
+np.random.seed(42)
 if __name__ == "__main__":
 
-    np.random.seed(42)
     ic_flags = {"time_cutoff":None,
                 "select_obs_sets":None,
                 "noise_level":1e15}
     # simPar
     #Length = [311,2000,311,2000, 311, 2000]
     Length  = 2000                            # Length (nm)
-    #lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
     L   = 2 ** 7                                # Spatial points
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
@@ -38,16 +47,19 @@ if __name__ == "__main__":
         validate_ic_flags(ic_flags)
     except Exception as e:
         logging.error(e)
-        return
+        sys.exit(1)
 
     iniPar = get_initpoints(r"/blue/c.hages/bay_inputs/{}".format(sys.argv[2]), ic_flags)
+    try:
+        validate_IC(iniPar, L)
+    except Exception as e:
+        logging.error(e)
+        sys.exit(1)
 
     # This code follows a strict order of parameters:
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda, mag_offset]
-    param_names = ["n0", "p0", "mun", "mup", "B", "Sf", "Sb", "taun", "taup", "lambda", "mag_offset"]
-    unit_conversions = np.array([(1e7)**-3,(1e7)**-3,(1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,(1e7)**3/(1e9)$
-    do_log = np.array([1,1,0,0,1,1,1,0,0,1,0])
     # Parameter ranges
+    do_log = np.array([1,1,0,0,1,1,1,0,0,1,0])
     minX = np.array([1e8, 3e15, 4000, 4000, 4.8e-11, 1, 1, 1, 1, 10**-1, 0])
     maxX = np.array([1e8, 3e15, 4000, 4000, 4.8e-11, 1e5, 1e5, 1500, 3000, 10**-1, 0])
 
@@ -61,15 +73,15 @@ if __name__ == "__main__":
         validate_gpu_info(gpu_info)
     except Exception as e:
         logging.error(e)
-        return
+        sys.exit(1)
         
     sim_flags = {"load_PL_from_file": "load" in sys.argv[4],
                  "override_equal_mu":False,
                  "override_equal_s":False,
                  "log_pl":True,
                  "self_normalize":False,
-                 "random_sample:":True,
-                 "num_points":2**17,
+                 "random_sample":True,
+                 "num_points":2**17}
 
     experimental_data_filename = r"/blue/c.hages/bay_inputs/{}".format(sys.argv[1])
     out_filename = sys.argv[3]
@@ -95,8 +107,8 @@ if __name__ == "__main__":
             else:
                 print("{}: {} to {} {}".format(param_names[i], minX[i], maxX[i], "log" if do_log[i] else "linear"))
 
-        e_data = get_data(experimental_data_filename, ic_flags, scale_f=1e-23)
-        assert len(iniPar) == len(e_data[0]), "Num. ICs ({}) doesn't match num. datasets ({})".format(len(iniPar), le$
+        e_data = get_data(experimental_data_filename, ic_flags, sim_flags, scale_f=1e-23)
+        assert len(iniPar) == len(e_data[0]), "Num. ICs mismatch num. datasets"
         print("\nInitial condition - {}".format(iniPar))
         print("\nExperimental data - {}".format(experimental_data_filename))
 
