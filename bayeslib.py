@@ -11,6 +11,8 @@ import sys
 import time
 import numpy as np
 
+from pvSimPCR import pvSim
+from probs import prob, fastlog
 ## Define constants
 #eps0 = 8.854 * 1e-12 * 1e-9 # [C / V m] to {C / V nm}
 #q = 1.0 # [e]
@@ -127,12 +129,15 @@ def make_grid(N, P, minX, maxX, do_log, sim_flags, nref=None, minP=None, refs=No
 def simulate(model, e_data, P, X, plI, num_curves,
              sim_params, init_params, sim_flags, gpu_info, gpu_id, solver_time, err_sq_time, misc_time):
 
+    has_GPU = gpu_info["has_GPU"]
     GPU_GROUP_SIZE = gpu_info["sims_per_gpu"]
     num_gpus = gpu_info["num_gpus"]
+    TPB = gpu_info["threads_per_block"]
+    max_sims_per_block = gpu_info["max_sims_per_block"]
+
     LOADIN_PL = sim_flags["load_PL_from_file"]
     LOG_PL = sim_flags["log_pl"]
     NORMALIZE = sim_flags["self_normalize"]
-
     try:
         cuda.select_device(gpu_id)
     except IndexError:
@@ -222,8 +227,6 @@ def simulate(model, e_data, P, X, plI, num_curves,
     return
 
 def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_flags, gpu_info):        # Driver function
-    global num_SMs
-    global has_GPU
     num_gpus = gpu_info["num_gpus"]
     solver_time = np.zeros(num_gpus)
     err_sq_time = np.zeros(num_gpus)
