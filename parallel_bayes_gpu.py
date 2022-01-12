@@ -1,4 +1,3 @@
-import csv
 import logging
 from numba import cuda
 from time import perf_counter
@@ -6,7 +5,9 @@ import sys
 import numpy as np
 import os
 
-from bayeslib import bayes, get_initpoints, get_data, validate_ic_flags, validate_gpu_info, validate_IC
+from bayeslib import bayes
+from bayes_io import get_initpoints, get_data, export
+from bayes_validate import validate_ic_flags, validate_gpu_info, validate_IC
 from pvSimPCR import pvSim
 
 lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
@@ -148,28 +149,6 @@ if __name__ == "__main__":
     maxX /= unit_conversions
     X /= unit_conversions
 
-
-    try:
-        print("Creating dir {}".format(out_filename))
-        os.mkdir(out_filename)
-    except FileExistsError:
-        print("{} dir already exists".format(out_filename))
     clock0 = perf_counter()
-
-    try:
-        print("Writing to /blue:")
-        base = os.path.basename(out_filename)
-        np.save(os.path.join(out_filename, "{}_BAYRAN_P.npy".format(base)), P)
-        np.save(os.path.join(out_filename, "{}_BAYRAN_X.npy".format(base)), X)
-
-    except Exception as e:
-        print(e)
-        print("Write failed; rewriting to backup location /home:")
-        sys.exit(0)
-        wdir = r"/home/cfai2304/super_bayes"
-        np.save(os.path.join(out_filename, "{}_BAYRAN_P.npy".format(base)), P)
-        np.save(os.path.join(out_filename, "{}_BAYRAN_X.npy".format(base)), X)
-
+    export(out_filename, P, X)
     print("Export took {}".format(perf_counter() - clock0))
-
-

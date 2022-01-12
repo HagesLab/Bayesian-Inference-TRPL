@@ -4,20 +4,13 @@
 Created on Mon Sep 21 21:33:18 2020
 @author: tladd
 """
-import csv
 from numba import cuda
 import threading
 import sys
-import time
 import numpy as np
 
 from probs import prob, fastlog
-## Define constants
-#eps0 = 8.854 * 1e-12 * 1e-9 # [C / V m] to {C / V nm}
-#q = 1.0 # [e]
-#q_C = 1.602e-19 # [C]
-#kB = 8.61773e-5  # [eV / K]
-
+from bayes_io import save_raw_pl, load_raw_pl
 def indexGrid(N, refs):                        # Arrays of cell coordinates
     cN  = N.copy()                             # Copy of cell indexes
     K   = len(refs)                            # Num params
@@ -70,25 +63,6 @@ def random_grid(minX, maxX, do_log, num_points, do_grid=False, refs=None):
             
     return grid
 
-def maxP(N,P,X, refs, minX, maxX):
-    if not RANDOM_SAMPLE:
-        pN = np.prod(refs, axis=0)
-        ind = indexGrid(N,refs)
-        X = paramGrid(ind, refs, minX, maxX)
-    #for ti, tf in enumerate(T_FACTORS):
-        #print("Temperature:", tf)
-    wheremax = np.argmax(P)
-    print(X[wheremax])
-    print("P = {}".format(P[wheremax]))
-    #np.save("{}_BAYRAN_MAX.npy".format(wdir + out_filename), X[wheremax])
-
-def export_random_marP(X, P):
-    np.save("{}_BAYRAN_X.npy".format(wdir + out_filename), X)
-
-    for ti, tf in enumerate(T_FACTORS):
-        Pti = P[ti]
-        np.save("{}_BAYRAN_{}.npy".format(wdir + out_filename, int(tf)), Pti)
-    return
 
 def make_grid(N, P, minX, maxX, do_log, sim_flags, nref=None, minP=None, refs=None):
     OVERRIDE_EQUAL_MU = sim_flags["override_equal_mu"]
@@ -198,26 +172,16 @@ def simulate(model, e_data, P, X, plI, num_curves,
                     plI[gpu_id] /= plI[gpu_id][0]
                     plI[gpu_id] = plI[gpu_id].T
                 if LOG_PL:
-                    misc_time[gpu_id] += fastlog(plI[gpu_id], bval_cutoff, TPB[0], num_SMs)
+                    misc_time[gpu_id] += fastlog(plI[gpu_id], sys.float_info.min, TPB[0], num_SMs)
                 if "+" in sys.argv[4]:
-                    try:
-                        np.save("{}{}plI{}_grp{}.npy".format(wdir,out_filename,ic_num, blk), plI[0])
-                        print("Saved plI of size ", plI[0].shape)
-                    except Exception as e:
-                        print("Warning: save failed\n", e)
+                    save_raw_pl(out_filename, ic_num, blk, plI[0])
+                    
 
             else:
                 print("Loading plI group {}".format(blk))
-                try:
-                    plI = np.load("{}{}plI{}_grp{}.npy".format(wdir,out_filename, ic_num, blk))
-                    print("Loaded plI of size ", plI.shape)
-                except Exception as e:
-                    print("Error: load failed\n", e)
-                    sys.exit()
-
+                plI = load_raw_pl(out_filename, ic_num, blk)
 
             # Calculate errors
-
             err_sq_time[gpu_id] += prob(P[blk:blk+size], plI[gpu_id], values, std, np.ascontiguousarray(X[blk:blk+size, -1]), 
                                         TPB[0], num_SMs)
         # END LOOP OVER BLOCKS
@@ -262,130 +226,3 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_
 
 
 #-----------------------------------------------------------------------------#
-def get_data(exp_file, ic_flags, sim_flags, scale_f=1e-23):
-    # 1e-23 [cm^-2 s^-1] to [nm^-2 ns^-1]
-    global bval_cutoff
-    t = []
-    PL = []
-    uncertainty = []
-    bval_cutoff = 10 * sys.float_info.min
-    print("cutoff", bval_cutoff)
-
-    EARLY_CUT = ic_flags['time_cutoff']
-    SELECT = ic_flags['select_obs_sets']
-    NOISE_LEVEL = ic_flags['noise_level']
-
-    LOG_PL = sim_flags['log_pl']
-    NORMALIZE = sim_flags["self_normalize"]
-
-    with open(exp_file, newline='') as file:
-        eof = False
-        next_t = []
-        next_PL = []
-        next_uncertainty = []
-        ifstream = csv.reader(file)
-        count = 0
-        dataset_end_inds = [0]
-        for row in ifstream:
-            if row[0] == "END":
-                eof = True
-                finished = True
-            else:
-                finished = (float(row[0]) == 0 and len(next_t))
-
-            if eof or finished:
-                # t=0 means we finished reading the current PL curve - preprocess and package it
-                #dataset_end_inds.append(dataset_end_inds[-1] + count)
-                next_t = np.array(next_t)
-                if NOISE_LEVEL is not None:
-                    next_PL = (np.array(next_PL) + NOISE_LEVEL*np.random.normal(0, 1, len(next_PL))) * scale_f
-
-                else:
-                    next_PL = np.array(next_PL) * scale_f
-
-                next_uncertainty = np.array(next_uncertainty) * scale_f
-
-                if NORMALIZE:
-                    next_PL /= max(next_PL)
-
-                print("PL curve #{} finished reading".format(len(t)+1))
-                print("Number of points: {}".format(len(next_t)))
-                print("Times: {}".format(next_t))
-                print("PL values: {}".format(next_PL))
-                if LOG_PL:
-                    print("Num exp points affected by cutoff", np.sum(next_PL < bval_cutoff))
-
-                    # Deal with noisy negative values before taking log
-                    #bval_cutoff = np.mean(uncertainty)
-                    next_PL = np.abs(next_PL)
-                    next_PL[next_PL < bval_cutoff] = bval_cutoff
-
-                    next_uncertainty /= next_PL
-                    next_uncertainty /= 2.3 # Since we use log10 instead of ln
-                    next_PL = np.log10(next_PL)
-
-                t.append(next_t)
-                PL.append(next_PL)
-                uncertainty.append(next_uncertainty)
-
-                next_t = []
-                next_PL = []
-                next_uncertainty = []
-
-                count = 0
-
-            if not eof:
-                if (EARLY_CUT is not None and float(row[0]) > EARLY_CUT):
-                    pass
-                else: 
-                    next_t.append(float(row[0]))
-                    next_PL.append(float(row[1]))
-                    next_uncertainty.append(float(row[2]))
-            
-            count += 1
-
-    if SELECT is not None:
-        return (np.array(t)[SELECT], np.array(PL)[SELECT], np.array(uncertainty)[SELECT])
-    else:
-        return (t, PL, uncertainty)
-
-def get_initpoints(init_file, ic_flags, scale_f=1e-21):
-    SELECT = ic_flags['select_obs_sets']
-
-    with open(init_file, newline='') as file:
-        ifstream = csv.reader(file)
-        initpoints = []
-        for row in ifstream:
-            if len(row) == 0: continue
-            initpoints.append(row)
-        
-    if SELECT is not None:
-        initpoints = np.array(initpoints)[SELECT]
-    return np.array(initpoints, dtype=float) * scale_f
-
-def validate_IC(ics, L):
-    for ic in ics:
-        assert len(ic) == L, "Error: IC length:{}, declared L:{}".format(len(ic), L)
-    return
-
-def validate_ic_flags(ic_flags):
-    if ic_flags["time_cutoff"] is not None:
-        assert isinstance(ic_flags["time_cutoff"], (float, int)), "invalid time cutoff"
-        assert ic_flags["time_cutoff"] > 0, "invalid time cutoff"
-
-    if ic_flags["select_obs_sets"] is not None:
-        assert isinstance(ic_flags["select_obs_sets"], list), "invalid observation set selection"
-
-    if ic_flags["noise_level"] is not None:
-        assert isinstance(ic_flags["noise_level"], (float, int)), "invalid noise level"
-    return
-
-def validate_gpu_info(gpu_info):
-    assert isinstance(gpu_info["num_gpus"], int), "invalid num_gpus"
-    assert gpu_info["num_gpus"] > 0, "invalid num_gpus"
-    assert gpu_info["num_gpus"] <= 8, "too many gpus"
-
-    assert isinstance(gpu_info["sims_per_gpu"], int), "invalid sims per gpu"
-    assert gpu_info["sims_per_gpu"] > 0, "invalid sims per gpu"
-
-    return
