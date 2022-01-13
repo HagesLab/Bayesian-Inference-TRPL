@@ -7,7 +7,9 @@ import os
 
 from bayeslib import bayes
 from bayes_io import get_initpoints, get_data, export
-from bayes_validate import validate_ic_flags, validate_gpu_info, validate_IC
+from bayes_validate import validate_ic_flags, validate_gpu_info
+from bayes_validate import validate_IC, validate_params
+from bayes_validate import connect_to_gpu
 from pvSimPCR import pvSim
 
 lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
@@ -18,7 +20,7 @@ unit_conversions = np.array([(1e7)**-3,(1e7)**-3,
                              (1e7)/(1e9),(1e7)/(1e9),
                              1,1,
                              lambda0, 1])
-
+num_params = len(param_names)
 np.random.seed(42)
 if __name__ == "__main__":
 
@@ -69,68 +71,29 @@ if __name__ == "__main__":
 
     # Validate
     try:
-        validate_ic_flags(ic_flags)
-    except Exception as e:
-        logging.error(e)
-        sys.exit(1)
-
-    try:
-        validate_IC(iniPar, L)
-    except Exception as e:
-        logging.error(e)
-        sys.exit(1)
-
-    try:
-        validate_gpu_info(gpu_info)
-    except Exception as e:
-        logging.error(e)
-        sys.exit(1)
-
-    # Pre-checks
-    try:
-        num_params = len(param_names)
-        assert (len(unit_conversions) == num_params), "Unit conversion array is missing entries"
-        assert (len(do_log) == num_params), "do_log mask is missing values"
-        assert (len(minX) == num_params), "Missing min param values"
-        assert (len(maxX) == num_params), "Missing max param values"
-        assert all(minX <= maxX), "Min params larger than max params"
-        
-        print("Starting simulations with the following parameters:")
-
-        print("Lengths: {}".format(Length))
-        for i in range(num_params):
-            if minX[i] == maxX[i]:
-                print("{}: {}".format(param_names[i], minX[i]))
-
-            else:
-                print("{}: {} to {} {}".format(param_names[i], minX[i], maxX[i], "log" if do_log[i] else "linear"))
-
         assert len(iniPar) == len(e_data[0]), "Num. ICs mismatch num. datasets"
-        print("\nInitial condition - {}".format(init_filename))
-        print("\nExperimental data - {}".format(experimental_data_filename))
-        print("Output: {}".format(out_filename))
+        validate_ic_flags(ic_flags)
+        validate_IC(iniPar, L)
+        validate_gpu_info(gpu_info)
+        validate_params(num_params, unit_conversions, do_log, minX, maxX)
+        connect_to_gpu(gpu_info)
+    except Exception as e:
+        logging.error(e)
+        sys.exit(1)
 
-        try:
-            print("Detecting GPU...")
-            gpu_info["has_GPU"] = cuda.detect()
-        except Exception as e:
-            print(e)
-            gpu_info["has_GPU"] = False
+    print("Starting simulations with the following parameters:")
 
-        if gpu_info["has_GPU"]:
-            device = cuda.get_current_device()
+    print("Lengths: {}".format(Length))
+    for i in range(num_params):
+        if minX[i] == maxX[i]:
+            print("{}: {}".format(param_names[i], minX[i]))
 
-            gpu_info["threads_per_block"] = (2 ** 7,)
-            gpu_info["max_sims_per_block"] = 3           # Maximum of 6 due to shared memory limit
-            
         else:
-            print("No GPU detected - reverting to CPU simulation")
-            raise NotImplementedError
-            
+            print("{}: {} to {} {}".format(param_names[i], minX[i], maxX[i], "log" if do_log[i] else "linear"))
 
-    except Exception as oops:
-        print(oops)
-        sys.exit(0)
+    print("\nInitial condition - {}".format(init_filename))
+    print("\nExperimental data - {}".format(experimental_data_filename))
+    print("Output: {}".format(out_filename))
 
     print(ic_flags)
     print(gpu_info)
