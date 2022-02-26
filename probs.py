@@ -19,6 +19,7 @@ def lnP(P, plI, values, mag_grid, bval_cutoff, T_FACTOR):
 
 @cuda.jit(device=False)
 def kernel_lnP(P, plI, values, uncertainty, mag_grid):
+    """ GPU accelerated likelihood function kernel """
     #cutoff = math.log10(bval_cutoff)
     err_arr = cuda.shared.array(shape=(shared_array_size,), dtype=float64)
     thr = cuda.grid(1)
@@ -62,6 +63,7 @@ def prob(P, plI, values, uncertainty, mag_grid, TPB, BPG):
 
 @cuda.jit(device=False)
 def log_kernel(plI, MIN, TPB, BPG):
+    """ GPU accelerated logarithm kernel """
     blk = cuda.blockIdx.x
     thr = cuda.threadIdx.x
 
@@ -83,6 +85,7 @@ def fastlog(plI, MIN, TPB, BPG):
     return time.time() - clock0
 
 if __name__ == "__main__":
+    """ For self testing """
     tests = 10
     num_obs = 1000
     num_mags = 10

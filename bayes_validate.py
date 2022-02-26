@@ -4,6 +4,7 @@
 Created on Tue Jan 11 18:26:14 2022
 
 @author: cfai2304
+Validate input flags, options
 """
 from numba import cuda
 def validate_IC(ics, L):
@@ -41,15 +42,15 @@ def validate_params(num_params, unit_conversions, do_log, minX, maxX):
     assert all(minX <= maxX), "Min params larger than max params"
     return
 
-def connect_to_gpu(gpu_info):
+def connect_to_gpu(gpu_info, nthreads=128, sims_per_block=3):
 
     print("Detecting GPU...")
     gpu_info["has_GPU"] = cuda.detect()
     if gpu_info["has_GPU"]:
         device = cuda.get_current_device()
 
-        gpu_info["threads_per_block"] = (2 ** 7,)
-        gpu_info["max_sims_per_block"] = 3           # Maximum of 6 due to shared memory limit
+        gpu_info["threads_per_block"] = (nthreads,)
+        gpu_info["max_sims_per_block"] = sims_per_block
             
 
     return

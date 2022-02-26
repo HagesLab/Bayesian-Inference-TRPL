@@ -4,6 +4,8 @@
 Created on Tue Jan 11 18:10:38 2022
 
 @author: cfai2304
+
+IO functions for importing TRPL observations and exporting result likelihood data
 """
 import sys
 import csv
@@ -11,6 +13,7 @@ import os
 import numpy as np
 
 def get_data(exp_file, ic_flags, sim_flags, scale_f=1e-23):
+    """ Import observation .csv files - see Examples/*_Observations.csv """
     # 1e-23 [cm^-2 s^-1] to [nm^-2 ns^-1]
     t = []
     PL = []
@@ -41,7 +44,6 @@ def get_data(exp_file, ic_flags, sim_flags, scale_f=1e-23):
 
             if eof or finished:
                 # t=0 means we finished reading the current PL curve - preprocess and package it
-                #dataset_end_inds.append(dataset_end_inds[-1] + count)
                 next_t = np.array(next_t)
                 if NOISE_LEVEL is not None:
                     next_PL = (np.array(next_PL) + NOISE_LEVEL*np.random.normal(0, 1, len(next_PL))) * scale_f
@@ -62,7 +64,6 @@ def get_data(exp_file, ic_flags, sim_flags, scale_f=1e-23):
                     print("Num exp points affected by cutoff", np.sum(next_PL < bval_cutoff))
 
                     # Deal with noisy negative values before taking log
-                    #bval_cutoff = np.mean(uncertainty)
                     next_PL = np.abs(next_PL)
                     next_PL[next_PL < bval_cutoff] = bval_cutoff
 
@@ -96,6 +97,7 @@ def get_data(exp_file, ic_flags, sim_flags, scale_f=1e-23):
         return (t, PL, uncertainty)
 
 def get_initpoints(init_file, ic_flags, scale_f=1e-21):
+    """ Import initial excitation .csv files - see Examples/*_Excitations.csv """
     SELECT = ic_flags['select_obs_sets']
 
     with open(init_file, newline='') as file:
@@ -110,6 +112,7 @@ def get_initpoints(init_file, ic_flags, scale_f=1e-21):
     return np.array(initpoints, dtype=float) * scale_f
 
 def export(out_filename, P, X):
+    """ Export list of likelihoods (*_BAYRAN_P.npy) and sample parameter points (*_BAYRAN_X.npy) """
     try:
         print("Creating dir {}".format(out_filename))
         os.mkdir(out_filename)
@@ -117,20 +120,15 @@ def export(out_filename, P, X):
         print("{} dir already exists".format(out_filename))
 
     try:
-        print("Writing to /blue:")
+        print("Writing to {}:".format(out_filename))
         base = os.path.basename(out_filename)
         np.save(os.path.join(out_filename, "{}_BAYRAN_P.npy".format(base)), P)
         np.save(os.path.join(out_filename, "{}_BAYRAN_X.npy".format(base)), X)
 
-    except Exception as e:
-        print(e)
-        print("Write failed; rewriting to backup location /home:")
-        out_filename = r"/home/cfai2304/super_bayes"
-        np.save(os.path.join(out_filename, "{}_BAYRAN_P.npy".format(base)), P)
-        np.save(os.path.join(out_filename, "{}_BAYRAN_X.npy".format(base)), X)
     return
 
 def save_raw_pl(out_filename, ic_num, blk, plI):
+    """ DEPRECATED - save direct output of TRPL simulation """
     try:
         np.save(os.path.join(out_filename, "plI{}_grp{}.npy".format(ic_num, blk), plI))
         print("Saved plI of size ", plI.shape)
@@ -138,6 +136,7 @@ def save_raw_pl(out_filename, ic_num, blk, plI):
         print("Warning: save failed\n", e)
         
 def load_raw_pl(out_filename, ic_num, blk):
+""" DEPRECATED - load direct output of TRPL simulation """
     try:
         plI = np.load(os.path.join(out_filename, "plI{}_grp{}.npy".format(ic_num, blk)))
         print("Loaded plI of size ", plI.shape)

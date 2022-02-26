@@ -1,3 +1,10 @@
+"""
+Last edited on Tue Feb 26 11:54:38 2022
+
+@author: cfai2304
+
+Main entry point for inferencing algorithm. Run this as main.
+"""
 import logging
 from numba import cuda
 from time import perf_counter
@@ -14,6 +21,8 @@ from pvSimPCR import pvSim
 
 lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
 param_names = ["n0", "p0", "mun", "mup", "B", "Sf", "Sb", "taun", "taup", "lambda", "mag_offset"]
+
+# Convert from common units to [V, nm, ns]
 unit_conversions = np.array([(1e7)**-3,(1e7)**-3,
                              (1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,
                              (1e7)**3/(1e9),
@@ -43,13 +52,26 @@ if __name__ == "__main__":
     maxX = np.array([1e8, 3e15, 4000, 4000, 4.8e-11, 1e5, 1e5, 1500, 3000, 10**-1, 0])
 
     # Other options
+    # time_cutoff: Truncate observations with timestamps larger than time_cutoff.
+    # select_obs_sets: Drop selected observation sets. [0,2] drops the 1st and 3rd observation sets.
+    # noise_level: Add Gaussian noise with this sigma to observation sets.
     ic_flags = {"time_cutoff":None,
                 "select_obs_sets":None,
                 "noise_level":1e15}
 
-    gpu_info = {"sims_per_gpu": 2 ** 13,
+    # sims_per_gpu: Number of simulations dispatched to GPU at a time. Adjust according to GPU mem limits.
+    # num_gpus: Number of GPUs to attempt connecting to.
+    gpu_info = {"sims_per_gpu": 2 ** 13,    
                 "num_gpus": 8}
 
+
+    # load_PL_from_file: Whether to import TRPL simulation data. Currently doesn't do anything.
+    # override_equal_mu: Constrain sampled mu_n to equal sampled mu_p.
+    # override_equal_s: Constrain sampled Sb to equal Sf.
+    # "log_pl: Compare log10 of PL for likelihood rather than direct PL values.
+    # self_normalize: Normalize all observed and simulation TRPL curves to their own maxima.
+    # random_sample: Draw random samples from uniform parameter space.
+    # num_points: Number of random samples to draw.
     sim_flags = {"load_PL_from_file": "load" in sys.argv[4],
                  "override_equal_mu":False,
                  "override_equal_s":False,

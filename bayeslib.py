@@ -3,6 +3,7 @@
 """
 Created on Mon Sep 21 21:33:18 2020
 @author: tladd
+Driver functions for inference algorithm - random sampler, simulation, likelihood calculation
 """
 from numba import cuda
 import threading
@@ -13,6 +14,7 @@ from probs import prob, fastlog
 from bayes_io import save_raw_pl, load_raw_pl
 
 def random_grid(minX, maxX, do_log, num_points, do_grid=False, refs=None):
+    """ Draw [num_points] random points from hyperspace bounded by [minX], [maxX] """
     num_params = len(minX)
     grid = np.empty((num_points, num_params))
     
@@ -28,6 +30,7 @@ def random_grid(minX, maxX, do_log, num_points, do_grid=False, refs=None):
     return grid
 
 def make_grid(N, P, minX, maxX, do_log, sim_flags, nref=None, minP=None, refs=None):
+    """ Set up sampling grid - either random sample or (DEPRECATED) coarse grid sample """
     OVERRIDE_EQUAL_MU = sim_flags["override_equal_mu"]
     OVERRIDE_EQUAL_S = sim_flags["override_equal_s"]
     RANDOM_SAMPLE = sim_flags["random_sample"]
@@ -65,7 +68,7 @@ def make_grid(N, P, minX, maxX, do_log, sim_flags, nref=None, minP=None, refs=No
 
 def simulate(model, e_data, P, X, plI, num_curves,
              sim_params, init_params, sim_flags, gpu_info, gpu_id, solver_time, err_sq_time, misc_time):
-
+    """ Delegate blocks of simulation tasks to connected GPUs """
     has_GPU = gpu_info["has_GPU"]
     GPU_GROUP_SIZE = gpu_info["sims_per_gpu"]
     num_gpus = gpu_info["num_gpus"]
@@ -156,7 +159,8 @@ def simulate(model, e_data, P, X, plI, num_curves,
 
     return
 
-def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_flags, gpu_info):        # Driver function
+def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_flags, gpu_info):
+    """ "main" driver function """
     num_gpus = gpu_info["num_gpus"]
     solver_time = np.zeros(num_gpus)
     err_sq_time = np.zeros(num_gpus)

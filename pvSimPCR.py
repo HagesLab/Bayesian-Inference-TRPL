@@ -4,6 +4,7 @@
 Created on Sat Dec 19 15:05:30 2020
 
 @author: tladd
+GPU-Accelerated TRPL simulation
 """
 import numpy as np
 from numba import cuda, float32 as floatX
@@ -12,6 +13,7 @@ import time
 
 @cuda.jit(device=True)
 def norm2(A0, A1, A2, b, c, buffer, err, num_sims, TPB):
+    """ Compute 2-norm of N, P to test convergence """
     N = len(b)
     thr = cuda.threadIdx.x
     for y in range(thr, num_sims, TPB):
@@ -39,7 +41,7 @@ def norm2(A0, A1, A2, b, c, buffer, err, num_sims, TPB):
 
 @cuda.jit(device=True)
 def pcreduce(ld, d, ud, B, c, buffer, num_sims, TPB):
-
+    """ Tridiagonal solve by parallel cyclic reduction """
     rf = 1
     N = len(ld)
     thr = cuda.threadIdx.x
@@ -220,6 +222,7 @@ def iterate(N, P, E, matPar, par, p, t):
 
 @cuda.jit(device=False)
 def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
+    """ Main GPU kernel """
     L, T, tol, MAX, plT = simPar[:5]
     pT   = simPar[5:]
     N0   = matPar[:,0]
@@ -300,6 +303,7 @@ def tEvol(N, P, E, plN, plP, plE, plI, matPar, simPar, gridPar, race):
           
 
 def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, BPG, max_sims_per_block=1, init_mode="exp"):
+    """ Driver """
     #print("Solver called")
     #print((TPB, BPG))
     # Unpack local parameters
@@ -392,7 +396,7 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
     return solver_time
 
 if __name__ == "__main__":
-
+    """ Generate test simulation using configuration from pvSetup.py """
     import pickle
     cuda.detect()
     device = cuda.get_current_device()
