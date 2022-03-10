@@ -1,0 +1,68 @@
+!Parameter Scales
+$n_0$	1
+$p_0$	0
+$\mu_n$	0
+$\mu_p$	0
+$k^*$	1
+$S_F$	1
+$S_B$	1
+$\tau_n$	0
+$\tau_p$	0
+$\lambda$	0
+$m$	0
+$\tau_{eff}$	0
+$\tau_{rad}$	0
+$(S_F+S_B)$	1
+$\mu\prime$	0
+$\epsilon$	1
+$\tau_n+\tau_p$	0
+!Parameter Ranges
+$n_0$	100000000.0	100000000.0
+$p_0$	0.0	1e+16
+$\mu_n$	0.0	100.0
+$\mu_p$	0.0	100.0
+$k^*$	1e-11	1e-09
+$S_F$	1.0	100000.0
+$S_B$	1.0	100000.0
+$\tau_n$	0.0	1500.0
+$\tau_p$	0.0	3000.0
+$\lambda$	0.001	10.0
+$m$	-1.0	1.0
+!Thickness	2000.0
+!Num_observations	27200.0
+!Parameter Enabled
+$n_0$	0
+$p_0$	0
+$\mu_n$	0
+$\mu_p$	0
+$k^*$	0
+$S_F$	1
+$S_B$	1
+$\tau_n$	1
+$\tau_p$	1
+$\lambda$	0
+$m$	0
+$\tau_{eff}$	0
+$\tau_{rad}$	0
+$(S_F+S_B)$	0
+$\mu\prime$	0
+$\epsilon$	0
+$\tau_n+\tau_p$	0
+!Parameter Marks
+$n_0$	
+$p_0$	3000000000000000.0
+$\mu_n$	20.0
+$\mu_p$	20.0
+$k^*$	4.8e-11
+$S_F$	5005.0
+$S_B$	5005.0
+$\tau_n$	511.0
+$\tau_p$	871.0
+$\lambda$	
+$m$	
+$\tau_{eff}$	454.0
+$\tau_{rad}$	
+$(S_F+S_B)$	20.0
+$\mu\prime$	20.0
+$\epsilon$	
+$\tau_n+\tau_p$	
