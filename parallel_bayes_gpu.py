@@ -35,7 +35,7 @@ if __name__ == "__main__":
 
     # Set space and time grid options
     #Length = [311,2000,311,2000, 311, 2000]
-    Length  = 2000                            # Length (nm)
+    Length  = 311                            # Length (nm)
     L   = 2 ** 7                                # Spatial points
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
@@ -48,8 +48,8 @@ if __name__ == "__main__":
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda, mag_offset]
     # Set the parameter ranges/sample space
     do_log = np.array([1,1,0,0,1,1,1,0,0,1,0])
-    minX = np.array([1e8, 3e15, 4000, 4000, 4.8e-11, 1, 1, 1, 1, 10**-1, 0])
-    maxX = np.array([1e8, 3e15, 4000, 4000, 4.8e-11, 1e5, 1e5, 1500, 3000, 10**-1, 0])
+    minX = np.array([1e8, 1e15, 0, 0, 1e-11, 0.1, 0.1, 1, 1, 10**-1, 0])
+    maxX = np.array([1e8, 1e16, 50, 50, 1e-9, 1e2, 1e2, 1000, 2000, 10**-1, 0])
 
     # Other options
     # time_cutoff: Truncate observations with timestamps larger than time_cutoff.
@@ -57,35 +57,36 @@ if __name__ == "__main__":
     # noise_level: Add Gaussian noise with this sigma to observation sets.
     ic_flags = {"time_cutoff":None,
                 "select_obs_sets":None,
-                "noise_level":1e15}
+                "noise_level":None}
 
     # sims_per_gpu: Number of simulations dispatched to GPU at a time. Adjust according to GPU mem limits.
     # num_gpus: Number of GPUs to attempt connecting to.
-    gpu_info = {"sims_per_gpu": 2 ** 13,    
-                "num_gpus": 8}
+    gpu_info = {"sims_per_gpu": 2 ** 10,    
+                "num_gpus": 1}
 
 
     # load_PL_from_file: Whether to import TRPL simulation data. Currently doesn't do anything.
     # override_equal_mu: Constrain sampled mu_n to equal sampled mu_p.
     # override_equal_s: Constrain sampled Sb to equal Sf.
     # "log_pl: Compare log10 of PL for likelihood rather than direct PL values.
-    # self_normalize: Normalize all observed and simulation TRPL curves to their own maxima.
+    # self_normalize: Normalize all observed and simulation TRPL curves to their own maxima.init_dir
     # random_sample: Draw random samples from uniform parameter space.
     # num_points: Number of random samples to draw.
-    sim_flags = {"load_PL_from_file": "load" in sys.argv[4],
+    sim_flags = {"load_PL_from_file": False,
                  "override_equal_mu":False,
                  "override_equal_s":False,
                  "log_pl":True,
                  "self_normalize":False,
                  "random_sample":True,
-                 "num_points":2**17}
+                 "num_points":2**17, 
+                 "different_time_grid":None}#(2000, 0.025)}
 
     # Collect filenames
-    init_dir = r"/blue/c.hages/bay_inputs"
-    out_dir = r"/blue/c.hages/bay_outputs"
-    init_filename = os.path.join(init_dir, sys.argv[2])
-    experimental_data_filename = os.path.join(init_dir, sys.argv[1])
-    out_filename = os.path.join(out_dir, sys.argv[3])
+    init_dir = r"C:\Users\Chuck\Dropbox (UFL)\UF\Bayesian-Inference-TRPL Data\Staubb_Simulated\bay_inputs"
+    out_dir = r"C:\Users\Chuck\Dropbox (UFL)\UF\Bayesian-Inference-TRPL Data\Staubb_Simulated\bay_outputs"
+    init_filename = os.path.join(init_dir, "staub_MAPI_power_input.csv")
+    experimental_data_filename = os.path.join(init_dir, "staub_311nm_minsf.csv")
+    out_filename = os.path.join(out_dir, "OUT_staub_MAPI_power")
 
     # Get observations and initial condition
     iniPar = get_initpoints(init_filename, ic_flags)
@@ -98,7 +99,7 @@ if __name__ == "__main__":
         validate_IC(iniPar, L)
         validate_gpu_info(gpu_info)
         validate_params(num_params, unit_conversions, do_log, minX, maxX)
-        connect_to_gpu(gpu_info)
+        connect_to_gpu(gpu_info, nthreads=128, sims_per_block=1)
     except Exception as e:
         logging.error(e)
         sys.exit(1)

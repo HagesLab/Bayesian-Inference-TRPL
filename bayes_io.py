@@ -124,6 +124,9 @@ def export(out_filename, P, X):
         base = os.path.basename(out_filename)
         np.save(os.path.join(out_filename, "{}_BAYRAN_P.npy".format(base)), P)
         np.save(os.path.join(out_filename, "{}_BAYRAN_X.npy".format(base)), X)
+        
+    except Exception as e:
+        print("Error export {}".format(e))
 
     return
 
@@ -136,7 +139,7 @@ def save_raw_pl(out_filename, ic_num, blk, plI):
         print("Warning: save failed\n", e)
         
 def load_raw_pl(out_filename, ic_num, blk):
-""" DEPRECATED - load direct output of TRPL simulation """
+    """ DEPRECATED - load direct output of TRPL simulation """
     try:
         plI = np.load(os.path.join(out_filename, "plI{}_grp{}.npy".format(ic_num, blk)))
         print("Loaded plI of size ", plI.shape)

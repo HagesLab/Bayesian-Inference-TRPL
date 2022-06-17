@@ -74,7 +74,8 @@ def simulate(model, e_data, P, X, plI, num_curves,
     num_gpus = gpu_info["num_gpus"]
     TPB = gpu_info["threads_per_block"]
     max_sims_per_block = gpu_info["max_sims_per_block"]
-
+    
+    alt_time_grid = sim_flags["different_time_grid"]
     LOADIN_PL = sim_flags["load_PL_from_file"]
     LOG_PL = sim_flags["log_pl"]
     NORMALIZE = sim_flags["self_normalize"]
@@ -104,9 +105,12 @@ def simulate(model, e_data, P, X, plI, num_curves,
             print("new thickness: {}".format(sim_params[0]))
 
         num_observations = len(values)
-        num_tsteps_needed = (num_observations-1)*sim_params[4]
-        sim_params[3] = num_tsteps_needed
-        sim_params[1] = times[-1]
+        if alt_time_grid is None:
+            num_tsteps_needed = (num_observations-1)*sim_params[4]
+            sim_params[3] = num_tsteps_needed
+            sim_params[1] = times[-1]
+        else:
+            num_tsteps_needed = alt_time_grid[1]
         sim_params[5] = tuple(np.array(sim_params[5])*sim_params[4]*sim_params[3]//100)
 
         if gpu_id == 0: 
@@ -117,6 +121,7 @@ def simulate(model, e_data, P, X, plI, num_curves,
             print(sim_params)
 
         for blk in range(gpu_id*GPU_GROUP_SIZE,len(X),num_gpus*GPU_GROUP_SIZE):
+            print("Curve #{}: Calculating {} of {}".format(ic_num, blk, len(X)))
             size = min(GPU_GROUP_SIZE, len(X) - blk)
 
             if not LOADIN_PL:
@@ -140,8 +145,8 @@ def simulate(model, e_data, P, X, plI, num_curves,
                     plI[gpu_id] = plI[gpu_id].T
                 if LOG_PL:
                     misc_time[gpu_id] += fastlog(plI[gpu_id], sys.float_info.min, TPB[0], num_SMs)
-                if "+" in sys.argv[4]:
-                    print("Warning: saving PL files WIP")
+                # if "+" in sys.argv[4]:
+                #     print("Warning: saving PL files WIP")
                     
                     #save_raw_pl(out_filename, ic_num, blk, plI[0])
                     
@@ -177,18 +182,23 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_
 
     threads = []
     plI = [None for i in range(num_gpus)]
-    for gpu_id in range(num_gpus):
-        print("Starting thread {}".format(gpu_id))
-        thread = threading.Thread(target=simulate, args=(model, e_data, P, X, plI,
+    
+    gpu_id = 0
+    simulate(model, e_data, P, X, plI,
                                   num_curves,sim_params[gpu_id], init_params, sim_flags, gpu_info, gpu_id,
-                                  solver_time, err_sq_time, misc_time))
-        threads.append(thread)
-        thread.start()
+                                  solver_time, err_sq_time, misc_time)
+    # for gpu_id in range(num_gpus):
+    #     print("Starting thread {}".format(gpu_id))
+    #     thread = threading.Thread(target=simulate, args=(model, e_data, P, X, plI,
+    #                               num_curves,sim_params[gpu_id], init_params, sim_flags, gpu_info, gpu_id,
+    #                               solver_time, err_sq_time, misc_time))
+    #     threads.append(thread)
+    #     thread.start()
 
-    for gpu_id, thread in enumerate(threads):
-        print("Ending thread {}".format(gpu_id))
-        thread.join()
-        print("Thread {} closed".format(gpu_id))
+    # for gpu_id, thread in enumerate(threads):
+    #     print("Ending thread {}".format(gpu_id))
+    #     thread.join()
+    #     print("Thread {} closed".format(gpu_id))
 
     print("Total tEvol time: {}, avg {}".format(solver_time, np.mean(solver_time)))
     print("Total err_sq time (temperatures and mag_offsets): {}, avg {}".format(err_sq_time, np.mean(err_sq_time)))
