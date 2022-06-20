@@ -57,7 +57,7 @@ if __name__ == "__main__":
     # time_cutoff: Truncate observations with timestamps larger than time_cutoff.
     # select_obs_sets: Drop selected observation sets. [0,2] drops the 1st and 3rd observation sets.
     # noise_level: Add Gaussian noise with this sigma to observation sets.
-    ic_flags = {"time_cutoff":None,
+    ic_flags = {"time_cutoff":2000,
                 "select_obs_sets":None,
                 "noise_level":None}
 
