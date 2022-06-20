@@ -17,7 +17,7 @@ from bayes_io import get_initpoints, get_data, export
 from bayes_validate import validate_ic_flags, validate_gpu_info
 from bayes_validate import validate_IC, validate_params
 from bayes_validate import connect_to_gpu
-from pvSimPCR import pvSim
+
 
 lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
 param_names = ["n0", "p0", "mun", "mup", "B", "Sf", "Sb", "taun", "taup", "lambda", "mag_offset"]
@@ -48,8 +48,8 @@ if __name__ == "__main__":
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda, mag_offset]
     # Set the parameter ranges/sample space
     do_log = np.array([1,1,0,0,1,1,1,0,0,1,0])
-    minX = np.array([1e8, 1e15, 0, 0, 1e-11, 0.1, 0.1, 1, 1, 10**-1, 0])
-    maxX = np.array([1e8, 1e16, 50, 50, 1e-9, 1e2, 1e2, 1000, 2000, 10**-1, 0])
+    minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 2, 2, 1, 871, 10**-1, 0])
+    maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 2, 2, 1000, 871, 10**-1, 0])
 
     # Other options
     # time_cutoff: Truncate observations with timestamps larger than time_cutoff.
@@ -61,7 +61,7 @@ if __name__ == "__main__":
 
     # sims_per_gpu: Number of simulations dispatched to GPU at a time. Adjust according to GPU mem limits.
     # num_gpus: Number of GPUs to attempt connecting to.
-    gpu_info = {"sims_per_gpu": 2 ** 10,    
+    gpu_info = {"sims_per_gpu": 2 ** 5,    
                 "num_gpus": 1}
 
 
@@ -78,12 +78,12 @@ if __name__ == "__main__":
                  "log_pl":True,
                  "self_normalize":False,
                  "random_sample":True,
-                 "num_points":2**17, 
+                 "num_points":2**7, 
                  "different_time_grid":None}#(2000, 0.025)}
 
     # Collect filenames
-    init_dir = r"C:\Users\Chuck\Dropbox (UFL)\UF\Bayesian-Inference-TRPL Data\Staubb_Simulated\bay_inputs"
-    out_dir = r"C:\Users\Chuck\Dropbox (UFL)\UF\Bayesian-Inference-TRPL Data\Staubb_Simulated\bay_outputs"
+    init_dir = r"C:\Users\cfai2\Documents\src\bayesian processing\input curves\Staubb_Simulated\bay_inputs"
+    out_dir = r"C:\Users\cfai2\Documents\src\bayesian processing\input curves\Staubb_Simulated\bay_outputs"
     init_filename = os.path.join(init_dir, "staub_MAPI_power_input.csv")
     experimental_data_filename = os.path.join(init_dir, "staub_311nm_minsf.csv")
     out_filename = os.path.join(out_dir, "OUT_staub_MAPI_power")
@@ -102,8 +102,15 @@ if __name__ == "__main__":
         connect_to_gpu(gpu_info, nthreads=128, sims_per_block=1)
     except Exception as e:
         logging.error(e)
-        sys.exit(1)
+        logging.error("Continuing with CPU fallback")
 
+    if gpu_info.get('has_GPU', False):
+        from pvSimPCR import pvSim
+        model = pvSim
+        
+    else:
+        from pvSim_fallback import pvSim_cpu_fallback
+        model = pvSim_cpu_fallback
     print("Starting simulations with the following parameters:")
 
     print("Lengths: {}".format(Length))
@@ -128,7 +135,7 @@ if __name__ == "__main__":
     N    = np.array([0])
     P    = None
     clock0 = perf_counter()
-    N, P, X = bayes(pvSim, N, P, minX, maxX, do_log, iniPar, simPar, e_data, sim_flags, gpu_info)
+    N, P, X = bayes(model, N, P, minX, maxX, do_log, iniPar, simPar, e_data, sim_flags, gpu_info)
     print("Bayesim took {} s".format(perf_counter() - clock0))
 
     minX /= unit_conversions

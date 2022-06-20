@@ -9,6 +9,7 @@ from numba import cuda
 import threading
 import sys
 import numpy as np
+import time
 
 from probs import prob, fastlog
 from bayes_io import save_raw_pl, load_raw_pl
@@ -72,20 +73,24 @@ def simulate(model, e_data, P, X, plI, num_curves,
     has_GPU = gpu_info["has_GPU"]
     GPU_GROUP_SIZE = gpu_info["sims_per_gpu"]
     num_gpus = gpu_info["num_gpus"]
-    TPB = gpu_info["threads_per_block"]
-    max_sims_per_block = gpu_info["max_sims_per_block"]
+    
+    if has_GPU:
+        TPB = gpu_info["threads_per_block"]
+        max_sims_per_block = gpu_info["max_sims_per_block"]
+        
+        try:
+            cuda.select_device(gpu_id)
+        except IndexError:
+            print("Error: threads failed to launch")
+            return
+        device = cuda.get_current_device()
+        num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
     
     alt_time_grid = sim_flags["different_time_grid"]
     LOADIN_PL = sim_flags["load_PL_from_file"]
     LOG_PL = sim_flags["log_pl"]
     NORMALIZE = sim_flags["self_normalize"]
-    try:
-        cuda.select_device(gpu_id)
-    except IndexError:
-        print("Error: threads failed to launch")
-        return
-    device = cuda.get_current_device()
-    num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
+    
 
     if isinstance(sim_params[0], (int, float)):
         thicknesses = [sim_params[0] for ic_num in range(num_curves)]
@@ -127,16 +132,16 @@ def simulate(model, e_data, P, X, plI, num_curves,
             if not LOADIN_PL:
                 plI[gpu_id] = np.empty((size, num_observations), dtype=np.float32) #f32 or f64 doesn't matter much here
                 assert len(plI[gpu_id][0]) == len(values), "Error: plI size mismatch"
-                plN = np.empty((size, 2, sim_params[2]))
-                plP = np.empty((size, 2, sim_params[2]))
-                plE = np.empty((size, 2, sim_params[2]+1))
 
                 if has_GPU:
+                    plN = np.empty((size, 2, sim_params[2]))
+                    plP = np.empty((size, 2, sim_params[2]))
+                    plE = np.empty((size, 2, sim_params[2]+1))
                     solver_time[gpu_id] += model(plI[gpu_id], plN, plP, plE, X[blk:blk+size, :-1], 
                                                  sim_params, init_params[ic_num],
                                                  TPB,8*num_SMs, max_sims_per_block, init_mode="points")
                 else:
-                    plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
+                    solver_time[gpu_id] += model(plI[gpu_id], X[blk:blk+size], sim_params, init_params[ic_num])
         
                 if NORMALIZE:
                     # Normalize each model to its own t=0
@@ -144,21 +149,27 @@ def simulate(model, e_data, P, X, plI, num_curves,
                     plI[gpu_id] /= plI[gpu_id][0]
                     plI[gpu_id] = plI[gpu_id].T
                 if LOG_PL:
-                    misc_time[gpu_id] += fastlog(plI[gpu_id], sys.float_info.min, TPB[0], num_SMs)
-                # if "+" in sys.argv[4]:
-                #     print("Warning: saving PL files WIP")
-                    
-                    #save_raw_pl(out_filename, ic_num, blk, plI[0])
-                    
-
+                    if has_GPU:
+                        misc_time[gpu_id] += fastlog(plI[gpu_id], sys.float_info.min, TPB[0], num_SMs)
+                    else:
+                        clock0 = time.perf_counter()
+                        plI[gpu_id] = np.abs(plI[gpu_id] + sys.float_info.min)
+                        plI[gpu_id] = np.log10(plI[gpu_id])
+                        misc_time[gpu_id] += time.perf_counter() - clock0
             else:
                 raise NotImplementedError("load PL not implemented")
                 #print("Loading plI group {}".format(blk))
                 #plI = load_raw_pl(out_filename, ic_num, blk)
 
             # Calculate errors
-            err_sq_time[gpu_id] += prob(P[blk:blk+size], plI[gpu_id], values, std, np.ascontiguousarray(X[blk:blk+size, -1]), 
-                                        TPB[0], num_SMs)
+            if has_GPU:
+                err_sq_time[gpu_id] += prob(P[blk:blk+size], plI[gpu_id], values, std, np.ascontiguousarray(X[blk:blk+size, -1]), 
+                                            TPB[0], num_SMs)
+                
+            else:
+                clock0 = time.perf_counter()
+                P[blk:blk+size] -= np.sum((plI[gpu_id] - values)**2, axis=1)
+                err_sq_time[gpu_id] += time.perf_counter() - clock0
         # END LOOP OVER BLOCKS
     # END LOOP OVER ICs
 
