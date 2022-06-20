@@ -31,7 +31,7 @@ def random_grid(minX, maxX, do_log, num_points, do_grid=False, refs=None):
             
     return grid
 
-def make_grid(N, P, minX, maxX, do_log, sim_flags, nref=None, minP=None, refs=None):
+def make_grid(N, P, num_exp, minX, maxX, do_log, sim_flags, nref=None, minP=None, refs=None):
     """ Set up sampling grid - either random sample or (DEPRECATED) coarse grid sample """
     OVERRIDE_EQUAL_MU = sim_flags["override_equal_mu"]
     OVERRIDE_EQUAL_S = sim_flags["override_equal_s"]
@@ -60,7 +60,7 @@ def make_grid(N, P, minX, maxX, do_log, sim_flags, nref=None, minP=None, refs=No
             ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
             #X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
             X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
-    P = np.zeros((len(N)))                               # Likelihoods
+    P = np.zeros((num_exp, len(N)))                               # Likelihoods
     if OVERRIDE_EQUAL_MU:
         X[:,2] = X[:,3]
 
@@ -106,26 +106,14 @@ def simulate(model, e_data, P, X, plI, plI_int, num_curves,
     simulation_times = np.linspace(0, sim_params[1], sim_params[3]+1)
 
     for ic_num in range(num_curves):
-        # The time grid reported in the observations, which needs not match simulation_times
-        times = e_data[0][ic_num]
-        values = e_data[1][ic_num]
-        std = e_data[2][ic_num]
-        assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
-
-
-        skip_time_interpolation = almost_equal(simulation_times, times)
-        if skip_time_interpolation:    
-            print("No time interpolation needed; bypassing")
         # Update thickness
         sim_params[0] = thicknesses[ic_num]
         if gpu_id == 0: 
             print("new thickness: {}".format(sim_params[0]))
 
-        num_observations = len(values)
         sim_params[5] = tuple(np.array(sim_params[5])*sim_params[4]*sim_params[3]//100)
 
         if gpu_id == 0: 
-            print("Starting with values :{} \ncount: {}".format(values, len(values)))
             print("Taking {} timesteps".format(sim_params[3]))
             print("Final time: {}".format(sim_params[1]))
 
@@ -167,27 +155,38 @@ def simulate(model, e_data, P, X, plI, plI_int, num_curves,
                 #print("Loading plI group {}".format(blk))
                 #plI = load_raw_pl(out_filename, ic_num, blk)
                 
-            # Interpolate if observation times do not match simulation time grid
-            if skip_time_interpolation:
-                plI_int[gpu_id] = plI[gpu_id]
-            else:
-                clock0 = time.perf_counter()
-                plI_int[gpu_id] = np.empty((size, len(times)))
+            for e, exp in enumerate(e_data):
+                times = exp[0][ic_num]
+                values = exp[1][ic_num]
+                std = exp[2][ic_num]
                 
-                for i, unint_PL in enumerate(plI[gpu_id]):
-                    plI_int[gpu_id][i] = griddata(simulation_times, unint_PL, times)
+                skip_time_interpolation = almost_equal(simulation_times, times)
+                if skip_time_interpolation:    
+                    print("Experiment {}: No time interpolation needed; bypassing".format(e))
+                else:
+                    print("Experiment {}: time interpolating".format(e))
                     
-                misc_time[gpu_id] += time.perf_counter() - clock0
-                
-            # Calculate errors
-            if has_GPU:
-                err_sq_time[gpu_id] += prob(P[blk:blk+size], plI_int[gpu_id], values, std, np.ascontiguousarray(X[blk:blk+size, -1]), 
-                                            TPB[0], num_SMs)
-                
-            else:
-                clock0 = time.perf_counter()
-                P[blk:blk+size] -= np.sum((plI_int[gpu_id] - values)**2, axis=1)
-                err_sq_time[gpu_id] += time.perf_counter() - clock0
+                # Interpolate if observation times do not match simulation time grid
+                if skip_time_interpolation:
+                    plI_int[gpu_id] = plI[gpu_id]
+                else:
+                    clock0 = time.perf_counter()
+                    plI_int[gpu_id] = np.empty((size, len(times)))
+                    
+                    for i, unint_PL in enumerate(plI[gpu_id]):
+                        plI_int[gpu_id][i] = griddata(simulation_times, unint_PL, times)
+                        
+                    misc_time[gpu_id] += time.perf_counter() - clock0
+                    
+                # Calculate errors
+                if has_GPU:
+                    err_sq_time[gpu_id] += prob(P[e, blk:blk+size], plI_int[gpu_id], values, std, np.ascontiguousarray(X[blk:blk+size, -1]), 
+                                                TPB[0], num_SMs)
+                    
+                else:
+                    clock0 = time.perf_counter()
+                    P[e, blk:blk+size] -= np.sum((plI_int[gpu_id] - values)**2, axis=1)
+                    err_sq_time[gpu_id] += time.perf_counter() - clock0
         # END LOOP OVER BLOCKS
     # END LOOP OVER ICs
 
@@ -205,7 +204,7 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_
     #for i in range(len(e_data[0])):
     #    assert (len(e_data[0][i]) % timepoints_per_ic == 0), "Error: experiment {} data length not a multiple of points_per_ic".format(i+1)
 
-    N, P, X = make_grid(N, P, minX, maxX, do_log, sim_flags)
+    N, P, X = make_grid(N, P, len(e_data), minX, maxX, do_log, sim_flags)
 
     sim_params = [list(sim_params) for i in range(num_gpus)]
 
