@@ -33,16 +33,18 @@ num_params = len(param_names)
 np.random.seed(42)
 if __name__ == "__main__":
 
-    # Set space and time grid options
+    # Set space and time grid options for simulations
     #Length = [311,2000,311,2000, 311, 2000]
     Length  = 311                            # Length (nm)
     L   = 2 ** 7                                # Spatial points
+    Time = 2000                             # Final delay time (ns)
+    T = 80000                               # Time points
     plT = 1                                  # Set PL interval (dt)
     pT  = (0,1,3,10,30,100)                   # Set plot intervals (%)
     tol = 7                                   # Convergence tolerance
     MAX = 10000                                  # Max iterations
 
-    simPar = [Length, -1, L, -1, plT, pT, tol, MAX]
+    simPar = [Length, Time, L, T, plT, pT, tol, MAX]
 
     # This code follows a strict order of parameters:
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda, mag_offset]
@@ -78,15 +80,15 @@ if __name__ == "__main__":
                  "log_pl":True,
                  "self_normalize":False,
                  "random_sample":True,
-                 "num_points":2**7, 
+                 "num_points":2**3, 
                  "different_time_grid":None}#(2000, 0.025)}
 
     # Collect filenames
     init_dir = r"C:\Users\cfai2\Documents\src\bayesian processing\input curves\Staubb_Simulated\bay_inputs"
     out_dir = r"C:\Users\cfai2\Documents\src\bayesian processing\input curves\Staubb_Simulated\bay_outputs"
     init_filename = os.path.join(init_dir, "staub_MAPI_power_input.csv")
-    experimental_data_filename = os.path.join(init_dir, "staub_311nm_minsf.csv")
-    out_filename = os.path.join(out_dir, "OUT_staub_MAPI_power")
+    experimental_data_filename = os.path.join(init_dir, "staub_311nm_minsf_staubtimeres.csv")
+    out_filename = os.path.join(out_dir, "DEBUG1")
 
     # Get observations and initial condition
     iniPar = get_initpoints(init_filename, ic_flags)
