@@ -9,6 +9,8 @@ from numba import cuda
 import threading
 import sys
 import numpy as np
+import time
+from scipy.interpolate import griddata
 
 from probs import prob, fastlog
 from bayes_io import save_raw_pl, load_raw_pl
@@ -29,7 +31,7 @@ def random_grid(minX, maxX, do_log, num_points, do_grid=False, refs=None):
             
     return grid
 
-def make_grid(N, P, minX, maxX, do_log, sim_flags, nref=None, minP=None, refs=None):
+def make_grid(N, P, num_exp, minX, maxX, do_log, sim_flags, nref=None, minP=None, refs=None):
     """ Set up sampling grid - either random sample or (DEPRECATED) coarse grid sample """
     OVERRIDE_EQUAL_MU = sim_flags["override_equal_mu"]
     OVERRIDE_EQUAL_S = sim_flags["override_equal_s"]
@@ -58,7 +60,7 @@ def make_grid(N, P, minX, maxX, do_log, sim_flags, nref=None, minP=None, refs=No
             ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
             #X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
             X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
-    P = np.zeros((len(N)))                               # Likelihoods
+    P = np.zeros((num_exp, len(N)))                               # Likelihoods
     if OVERRIDE_EQUAL_MU:
         X[:,2] = X[:,3]
 
@@ -66,72 +68,74 @@ def make_grid(N, P, minX, maxX, do_log, sim_flags, nref=None, minP=None, refs=No
         X[:,6] = X[:,5]
     return N, P, X
 
-def simulate(model, e_data, P, X, plI, num_curves,
+def almost_equal(x, x0, threshold=1e-10):
+    if x.shape != x0.shape: return False
+    
+    return np.abs(np.nanmax((x - x0) / x0)) < threshold
+
+def simulate(model, e_data, P, X, plI, plI_int, num_curves,
              sim_params, init_params, sim_flags, gpu_info, gpu_id, solver_time, err_sq_time, misc_time):
     """ Delegate blocks of simulation tasks to connected GPUs """
     has_GPU = gpu_info["has_GPU"]
     GPU_GROUP_SIZE = gpu_info["sims_per_gpu"]
     num_gpus = gpu_info["num_gpus"]
-    TPB = gpu_info["threads_per_block"]
-    max_sims_per_block = gpu_info["max_sims_per_block"]
-
+    
+    if has_GPU:
+        TPB = gpu_info["threads_per_block"]
+        max_sims_per_block = gpu_info["max_sims_per_block"]
+        
+        try:
+            cuda.select_device(gpu_id)
+        except IndexError:
+            print("Error: threads failed to launch")
+            return
+        device = cuda.get_current_device()
+        num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
+    
     LOADIN_PL = sim_flags["load_PL_from_file"]
     LOG_PL = sim_flags["log_pl"]
     NORMALIZE = sim_flags["self_normalize"]
-    try:
-        cuda.select_device(gpu_id)
-    except IndexError:
-        print("Error: threads failed to launch")
-        return
-    device = cuda.get_current_device()
-    num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
+    
 
     if isinstance(sim_params[0], (int, float)):
         thicknesses = [sim_params[0] for ic_num in range(num_curves)]
     elif isinstance(sim_params[0], list):
         thicknesses = list(sim_params[0])
-    
+        
+    # The actual time grid the model will use
+    simulation_times = np.linspace(0, sim_params[1], sim_params[3]+1)
 
     for ic_num in range(num_curves):
-        times = e_data[0][ic_num]
-        values = e_data[1][ic_num]
-        std = e_data[2][ic_num]
-        assert times[0] == 0, "Error: model time grid mismatch; times started with {} for ic {}".format(times[0], ic_num)
-
         # Update thickness
         sim_params[0] = thicknesses[ic_num]
         if gpu_id == 0: 
             print("new thickness: {}".format(sim_params[0]))
 
-        num_observations = len(values)
-        num_tsteps_needed = (num_observations-1)*sim_params[4]
-        sim_params[3] = num_tsteps_needed
-        sim_params[1] = times[-1]
         sim_params[5] = tuple(np.array(sim_params[5])*sim_params[4]*sim_params[3]//100)
 
         if gpu_id == 0: 
-            print("Starting with values :{} \ncount: {}".format(values, len(values)))
             print("Taking {} timesteps".format(sim_params[3]))
             print("Final time: {}".format(sim_params[1]))
 
             print(sim_params)
 
         for blk in range(gpu_id*GPU_GROUP_SIZE,len(X),num_gpus*GPU_GROUP_SIZE):
+            print("Curve #{}: Calculating {} of {}".format(ic_num, blk, len(X)))
             size = min(GPU_GROUP_SIZE, len(X) - blk)
 
             if not LOADIN_PL:
-                plI[gpu_id] = np.empty((size, num_observations), dtype=np.float32) #f32 or f64 doesn't matter much here
-                assert len(plI[gpu_id][0]) == len(values), "Error: plI size mismatch"
-                plN = np.empty((size, 2, sim_params[2]))
-                plP = np.empty((size, 2, sim_params[2]))
-                plE = np.empty((size, 2, sim_params[2]+1))
+                plI[gpu_id] = np.empty((size, sim_params[3]+1), dtype=np.float32) #f32 or f64 doesn't matter much here
+                #assert len(plI[gpu_id][0]) == len(values), "Error: plI size mismatch"
 
                 if has_GPU:
+                    plN = np.empty((size, 2, sim_params[2]))
+                    plP = np.empty((size, 2, sim_params[2]))
+                    plE = np.empty((size, 2, sim_params[2]+1))
                     solver_time[gpu_id] += model(plI[gpu_id], plN, plP, plE, X[blk:blk+size, :-1], 
                                                  sim_params, init_params[ic_num],
                                                  TPB,8*num_SMs, max_sims_per_block, init_mode="points")
                 else:
-                    plI = model(X[blk:blk+size], sim_params, init_params[ic_num])[1][-1]
+                    solver_time[gpu_id] += model(plI[gpu_id], X[blk:blk+size], sim_params, init_params[ic_num])
         
                 if NORMALIZE:
                     # Normalize each model to its own t=0
@@ -139,21 +143,50 @@ def simulate(model, e_data, P, X, plI, num_curves,
                     plI[gpu_id] /= plI[gpu_id][0]
                     plI[gpu_id] = plI[gpu_id].T
                 if LOG_PL:
-                    misc_time[gpu_id] += fastlog(plI[gpu_id], sys.float_info.min, TPB[0], num_SMs)
-                if "+" in sys.argv[4]:
-                    print("Warning: saving PL files WIP")
-                    
-                    #save_raw_pl(out_filename, ic_num, blk, plI[0])
-                    
-
+                    if has_GPU:
+                        misc_time[gpu_id] += fastlog(plI[gpu_id], sys.float_info.min, TPB[0], num_SMs)
+                    else:
+                        clock0 = time.perf_counter()
+                        plI[gpu_id] = np.abs(plI[gpu_id] + sys.float_info.min)
+                        plI[gpu_id] = np.log10(plI[gpu_id])
+                        misc_time[gpu_id] += time.perf_counter() - clock0
             else:
                 raise NotImplementedError("load PL not implemented")
                 #print("Loading plI group {}".format(blk))
                 #plI = load_raw_pl(out_filename, ic_num, blk)
-
-            # Calculate errors
-            err_sq_time[gpu_id] += prob(P[blk:blk+size], plI[gpu_id], values, std, np.ascontiguousarray(X[blk:blk+size, -1]), 
-                                        TPB[0], num_SMs)
+                
+            for e, exp in enumerate(e_data):
+                times = exp[0][ic_num]
+                values = exp[1][ic_num]
+                std = exp[2][ic_num]
+                
+                skip_time_interpolation = almost_equal(simulation_times, times)
+                if skip_time_interpolation:    
+                    print("Experiment {}: No time interpolation needed; bypassing".format(e))
+                else:
+                    print("Experiment {}: time interpolating".format(e))
+                    
+                # Interpolate if observation times do not match simulation time grid
+                if skip_time_interpolation:
+                    plI_int[gpu_id] = plI[gpu_id]
+                else:
+                    clock0 = time.perf_counter()
+                    plI_int[gpu_id] = np.empty((size, len(times)))
+                    
+                    for i, unint_PL in enumerate(plI[gpu_id]):
+                        plI_int[gpu_id][i] = griddata(simulation_times, unint_PL, times)
+                        
+                    misc_time[gpu_id] += time.perf_counter() - clock0
+                    
+                # Calculate errors
+                if has_GPU:
+                    err_sq_time[gpu_id] += prob(P[e, blk:blk+size], plI_int[gpu_id], values, std, np.ascontiguousarray(X[blk:blk+size, -1]), 
+                                                TPB[0], num_SMs)
+                    
+                else:
+                    clock0 = time.perf_counter()
+                    P[e, blk:blk+size] -= np.sum((plI_int[gpu_id] - values)**2, axis=1)
+                    err_sq_time[gpu_id] += time.perf_counter() - clock0
         # END LOOP OVER BLOCKS
     # END LOOP OVER ICs
 
@@ -171,24 +204,30 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_
     #for i in range(len(e_data[0])):
     #    assert (len(e_data[0][i]) % timepoints_per_ic == 0), "Error: experiment {} data length not a multiple of points_per_ic".format(i+1)
 
-    N, P, X = make_grid(N, P, minX, maxX, do_log, sim_flags)
+    N, P, X = make_grid(N, P, len(e_data), minX, maxX, do_log, sim_flags)
 
     sim_params = [list(sim_params) for i in range(num_gpus)]
 
     threads = []
     plI = [None for i in range(num_gpus)]
-    for gpu_id in range(num_gpus):
-        print("Starting thread {}".format(gpu_id))
-        thread = threading.Thread(target=simulate, args=(model, e_data, P, X, plI,
+    plI_int = [None for i in range(num_gpus)]
+    
+    gpu_id = 0
+    simulate(model, e_data, P, X, plI, plI_int,
                                   num_curves,sim_params[gpu_id], init_params, sim_flags, gpu_info, gpu_id,
-                                  solver_time, err_sq_time, misc_time))
-        threads.append(thread)
-        thread.start()
+                                  solver_time, err_sq_time, misc_time)
+    # for gpu_id in range(num_gpus):
+    #     print("Starting thread {}".format(gpu_id))
+    #     thread = threading.Thread(target=simulate, args=(model, e_data, P, X, plI, plI_int,
+    #                               num_curves,sim_params[gpu_id], init_params, sim_flags, gpu_info, gpu_id,
+    #                               solver_time, err_sq_time, misc_time))
+    #     threads.append(thread)
+    #     thread.start()
 
-    for gpu_id, thread in enumerate(threads):
-        print("Ending thread {}".format(gpu_id))
-        thread.join()
-        print("Thread {} closed".format(gpu_id))
+    # for gpu_id, thread in enumerate(threads):
+    #     print("Ending thread {}".format(gpu_id))
+    #     thread.join()
+    #     print("Thread {} closed".format(gpu_id))
 
     print("Total tEvol time: {}, avg {}".format(solver_time, np.mean(solver_time)))
     print("Total err_sq time (temperatures and mag_offsets): {}, avg {}".format(err_sq_time, np.mean(err_sq_time)))

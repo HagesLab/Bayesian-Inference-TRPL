@@ -61,7 +61,7 @@ class PlotState():
                 
     def setup_2D(self, num_plots):
         
-        self.fig = Figure(figsize=(7,7), dpi=120)
+        self.fig = Figure(figsize=(num_plots*2.5, num_plots*2.5), dpi=120)
         self.subplots = [[None for n in range(num_plots)] for nn in range(num_plots)]
         for i in range(num_plots):
             for j in range(num_plots):
