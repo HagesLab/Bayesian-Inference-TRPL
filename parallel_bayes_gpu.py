@@ -83,8 +83,8 @@ if __name__ == "__main__":
     # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda, mag_offset]
     # Set the parameter ranges/sample space
     do_log = np.array([1,1,0,0,1,1,1,0,0,1,0])
-    minX = np.array([1e8, 1e14, 0, 0, 1e-11, 0.1, 0.1, 1, 1, 10**-1, 0])
-    maxX = np.array([1e8, 1e16, 50, 50, 1e-9, 1e2, 1e2, 1000, 2000, 10**-1, 0])
+    minX = np.array([1e8, 1e14, 20, 20, 1e-11, 0.1, 0.1, 1, 1, 10**-1, 0])
+    maxX = np.array([1e8, 1e16, 20, 20, 1e-9, 1e2, 1e2, 1000, 2000, 10**-1, 0])
 
     # Other options
     # time_cutoff: Truncate observations with timestamps larger than time_cutoff.
@@ -96,7 +96,7 @@ if __name__ == "__main__":
 
     # sims_per_gpu: Number of simulations dispatched to GPU at a time. Adjust according to GPU mem limits.
     # num_gpus: Number of GPUs to attempt connecting to.
-    gpu_info = {"sims_per_gpu": 2 ** 2,    
+    gpu_info = {"sims_per_gpu": 2 ** 10,    
                 "num_gpus": 1}
 
 
@@ -113,7 +113,7 @@ if __name__ == "__main__":
                  "log_pl":True,
                  "self_normalize":False,
                  "random_sample":True,
-                 "num_points":2**3, 
+                 "num_points":2**17, 
                  }
 
     # Collect filenames
@@ -143,10 +143,11 @@ if __name__ == "__main__":
         stop(logger, handler, 1)
         
     try:
+        logger.info("Detecting GPU...")
         connect_to_gpu(gpu_info, nthreads=128, sims_per_block=1)
     except Exception as e:
-        logging.warning(e)
-        logging.warning("Continuing with CPU fallback")
+        logger.warning(e)
+        logger.warning("Continuing with CPU fallback")
 
     if gpu_info.get('has_GPU', False):
         from pvSimPCR import pvSim
@@ -180,7 +181,7 @@ if __name__ == "__main__":
     N    = np.array([0])
     P    = None
     clock0 = perf_counter()
-    N, P, X = bayes(model, N, P, minX, maxX, do_log, iniPar, simPar, e_data, sim_flags, gpu_info)
+    N, P, X = bayes(model, N, P, minX, maxX, do_log, iniPar, simPar, e_data, sim_flags, gpu_info, logger=logger)
     logger.info("Bayesim took {} s".format(perf_counter() - clock0))
 
     minX /= unit_conversions

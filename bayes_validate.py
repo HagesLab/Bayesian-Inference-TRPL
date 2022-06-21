@@ -43,8 +43,6 @@ def validate_params(num_params, unit_conversions, do_log, minX, maxX):
     return
 
 def connect_to_gpu(gpu_info, nthreads=128, sims_per_block=3):
-
-    print("Detecting GPU...")
     gpu_info["has_GPU"] = False
     gpu_info["has_GPU"] = cuda.detect()
     if gpu_info["has_GPU"]:

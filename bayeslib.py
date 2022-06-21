@@ -41,7 +41,6 @@ def make_grid(N, P, num_exp, minX, maxX, do_log, sim_flags, nref=None, minP=None
     if RANDOM_SAMPLE:
         N = np.arange(NUM_POINTS)
         X = random_grid(minX, maxX, do_log, NUM_POINTS, do_grid=False, refs=refs)
-        print(len(X), "random points")
 
     else:
         raise NotImplementedError("Grid sample currently deprecated; set RANDOM_SAMPLE to true")
@@ -74,7 +73,8 @@ def almost_equal(x, x0, threshold=1e-10):
     return np.abs(np.nanmax((x - x0) / x0)) < threshold
 
 def simulate(model, e_data, P, X, plI, plI_int, num_curves,
-             sim_params, init_params, sim_flags, gpu_info, gpu_id, solver_time, err_sq_time, misc_time):
+             sim_params, init_params, sim_flags, gpu_info, gpu_id, solver_time, err_sq_time, misc_time,
+             logger=None):
     """ Delegate blocks of simulation tasks to connected GPUs """
     has_GPU = gpu_info["has_GPU"]
     GPU_GROUP_SIZE = gpu_info["sims_per_gpu"]
@@ -87,7 +87,8 @@ def simulate(model, e_data, P, X, plI, plI_int, num_curves,
         try:
             cuda.select_device(gpu_id)
         except IndexError:
-            print("Error: threads failed to launch")
+            if logger is not None:
+                logger.error("Error: threads failed to launch")
             return
         device = cuda.get_current_device()
         num_SMs = getattr(device, "MULTIPROCESSOR_COUNT")
@@ -108,19 +109,20 @@ def simulate(model, e_data, P, X, plI, plI_int, num_curves,
     for ic_num in range(num_curves):
         # Update thickness
         sim_params[0] = thicknesses[ic_num]
-        if gpu_id == 0: 
-            print("new thickness: {}".format(sim_params[0]))
+        if gpu_id == 0 and logger is not None: 
+            logger.info("new thickness: {}".format(sim_params[0]))
 
         sim_params[5] = tuple(np.array(sim_params[5])*sim_params[4]*sim_params[3]//100)
 
-        if gpu_id == 0: 
-            print("Taking {} timesteps".format(sim_params[3]))
-            print("Final time: {}".format(sim_params[1]))
+        if gpu_id == 0 and logger is not None: 
+            logger.info("Taking {} timesteps".format(sim_params[3]))
+            logger.info("Final time: {}".format(sim_params[1]))
 
-            print(sim_params)
+            logger.info(sim_params)
 
         for blk in range(gpu_id*GPU_GROUP_SIZE,len(X),num_gpus*GPU_GROUP_SIZE):
-            print("Curve #{}: Calculating {} of {}".format(ic_num, blk, len(X)))
+            if logger is not None:
+                logger.info("Curve #{}: Calculating {} of {}".format(ic_num, blk, len(X)))
             size = min(GPU_GROUP_SIZE, len(X) - blk)
 
             if not LOADIN_PL:
@@ -161,10 +163,12 @@ def simulate(model, e_data, P, X, plI, plI_int, num_curves,
                 std = exp[2][ic_num]
                 
                 skip_time_interpolation = almost_equal(simulation_times, times)
-                if skip_time_interpolation:    
-                    print("Experiment {}: No time interpolation needed; bypassing".format(e))
-                else:
-                    print("Experiment {}: time interpolating".format(e))
+                
+                if logger is not None:
+                    if skip_time_interpolation:    
+                        logger.info("Experiment {}: No time interpolation needed; bypassing".format(e))
+                    else:
+                        logger.info("Experiment {}: time interpolating".format(e))
                     
                 # Interpolate if observation times do not match simulation time grid
                 if skip_time_interpolation:
@@ -192,7 +196,7 @@ def simulate(model, e_data, P, X, plI, plI_int, num_curves,
 
     return
 
-def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_flags, gpu_info):
+def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_flags, gpu_info, logger=None):
     """ "main" driver function """
     num_gpus = gpu_info["num_gpus"]
     solver_time = np.zeros(num_gpus)
@@ -205,6 +209,9 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_
     #    assert (len(e_data[0][i]) % timepoints_per_ic == 0), "Error: experiment {} data length not a multiple of points_per_ic".format(i+1)
 
     N, P, X = make_grid(N, P, len(e_data), minX, maxX, do_log, sim_flags)
+    
+    if logger is not None:
+        logger.info("Initializing {} random samples".format(len(X)))
 
     sim_params = [list(sim_params) for i in range(num_gpus)]
 
@@ -215,12 +222,12 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_
     gpu_id = 0
     simulate(model, e_data, P, X, plI, plI_int,
                                   num_curves,sim_params[gpu_id], init_params, sim_flags, gpu_info, gpu_id,
-                                  solver_time, err_sq_time, misc_time)
+                                  solver_time, err_sq_time, misc_time, logger=logger)
     # for gpu_id in range(num_gpus):
     #     print("Starting thread {}".format(gpu_id))
     #     thread = threading.Thread(target=simulate, args=(model, e_data, P, X, plI, plI_int,
     #                               num_curves,sim_params[gpu_id], init_params, sim_flags, gpu_info, gpu_id,
-    #                               solver_time, err_sq_time, misc_time))
+    #                               solver_time, err_sq_time, misc_time, logger=logger))
     #     threads.append(thread)
     #     thread.start()
 
@@ -229,9 +236,10 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_
     #     thread.join()
     #     print("Thread {} closed".format(gpu_id))
 
-    print("Total tEvol time: {}, avg {}".format(solver_time, np.mean(solver_time)))
-    print("Total err_sq time (temperatures and mag_offsets): {}, avg {}".format(err_sq_time, np.mean(err_sq_time)))
-    print("Total misc time: {}, avg {}".format(misc_time, np.mean(misc_time)))
+    if logger is not None:
+        logger.info("Total tEvol time: {}, avg {}".format(solver_time, np.mean(solver_time)))
+        logger.info("Total err_sq time (temperatures and mag_offsets): {}, avg {}".format(err_sq_time, np.mean(err_sq_time)))
+        logger.info("Total misc time: {}, avg {}".format(misc_time, np.mean(misc_time)))
     return N, P, X
 
 
