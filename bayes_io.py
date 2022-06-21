@@ -12,13 +12,13 @@ import csv
 import os
 import numpy as np
 
-def get_data(exp_files, ic_flags, sim_flags, scale_f=1e-23):
+def get_data(exp_files, ic_flags, sim_flags, logger=None, scale_f=1e-23):
     """ Import observation .csv files - see Examples/*_Observations.csv """
     # 1e-23 [cm^-2 s^-1] to [nm^-2 ns^-1]
     all_e_data = []
     
     bval_cutoff = sys.float_info.min
-    print("cutoff", bval_cutoff)
+    if logger is not None: logger.info("cutoff: {}".format(bval_cutoff))
 
     EARLY_CUT = ic_flags['time_cutoff']
     SELECT = ic_flags['select_obs_sets']
@@ -59,12 +59,14 @@ def get_data(exp_files, ic_flags, sim_flags, scale_f=1e-23):
                     if NORMALIZE:
                         next_PL /= max(next_PL)
     
-                    print("PL curve #{} finished reading".format(len(t)+1))
-                    print("Number of points: {}".format(len(next_t)))
-                    print("Times: {}".format(next_t))
-                    print("PL values: {}".format(next_PL))
+                    if logger is not None:
+                        logger.info("PL curve #{} finished reading".format(len(t)+1))
+                        logger.info("Number of points: {}".format(len(next_t)))
+                        logger.info("Times: {}".format(next_t))
+                        logger.info("PL values: {}".format(next_PL))
                     if LOG_PL:
-                        print("Num exp points affected by cutoff", np.sum(next_PL < bval_cutoff))
+                        if logger is not None:
+                            logger.info("Num exp points affected by cutoff: {}".format(np.sum(next_PL < bval_cutoff)))
     
                         # Deal with noisy negative values before taking log
                         next_PL = np.abs(next_PL)
@@ -116,22 +118,24 @@ def get_initpoints(init_file, ic_flags, scale_f=1e-21):
         initpoints = np.array(initpoints)[SELECT]
     return np.array(initpoints, dtype=float) * scale_f
 
-def export(out_filename, P, X):
+def export(out_filename, P, X, logger=None):
     """ Export list of likelihoods (*_BAYRAN_P.npy) and sample parameter points (*_BAYRAN_X.npy) """
     try:
-        print("Creating dir {}".format(out_filename))
+        if logger is not None: logger.info("Creating dir {}".format(out_filename))
         os.mkdir(out_filename)
     except FileExistsError:
-        print("{} dir already exists".format(out_filename))
+        if logger is not None:
+            logger.warning("{} dir already exists".format(out_filename))
 
     try:
-        print("Writing to {}:".format(out_filename))
+        if logger is not None: 
+            logger.info("Writing to {}:".format(out_filename))
         base = os.path.basename(out_filename)
         np.save(os.path.join(out_filename, "{}_BAYRAN_P.npy".format(base)), P)
         np.save(os.path.join(out_filename, "{}_BAYRAN_X.npy".format(base)), X)
         
     except Exception as e:
-        print("Error export {}".format(e))
+        if logger is not None: logger.error("Error export {}".format(e))
 
     return
 

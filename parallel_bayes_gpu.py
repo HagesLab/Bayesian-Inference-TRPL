@@ -8,6 +8,7 @@ Main entry point for inferencing algorithm. Run this as main.
 import logging
 from numba import cuda
 from time import perf_counter
+from datetime import datetime
 import sys
 import numpy as np
 import os
@@ -31,7 +32,39 @@ unit_conversions = np.array([(1e7)**-3,(1e7)**-3,
                              lambda0, 1])
 num_params = len(param_names)
 np.random.seed(42)
+
+def start_logging(log_dir="Logs"):
+    if not os.path.isdir(log_dir):
+        try:
+            os.mkdir(log_dir)
+        except FileExistsError:
+            pass
+        
+    tstamp = str(datetime.now()).replace(":", "-")
+    #logging.basicConfig(filename=os.path.join(log_dir, f"{tstamp}.log"), filemode='a', level=logging.DEBUG)
+    logger = logging.getLogger("Bayes Logger Main")
+    logger.setLevel(logging.DEBUG)
+    handler = logging.FileHandler(os.path.join(log_dir, f"{tstamp}.log"))
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+            fmt='%(asctime)s %(levelname)s: %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+            )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    
+    return logger, handler
+
+def stop(logger, handler, err=0):
+    if err:
+        logger.error(f"Termining with error code {err}")
+    # Spyder needs explicit handler handling for some reason
+    logger.removeHandler(handler)
+    logging.shutdown()
+    return
+    
 if __name__ == "__main__":
+    logger, handler = start_logging()
 
     # Set space and time grid options for simulations
     #Length = [311,2000,311,2000, 311, 2000]
@@ -63,7 +96,7 @@ if __name__ == "__main__":
 
     # sims_per_gpu: Number of simulations dispatched to GPU at a time. Adjust according to GPU mem limits.
     # num_gpus: Number of GPUs to attempt connecting to.
-    gpu_info = {"sims_per_gpu": 2 ** 10,    
+    gpu_info = {"sims_per_gpu": 2 ** 2,    
                 "num_gpus": 1}
 
 
@@ -80,7 +113,7 @@ if __name__ == "__main__":
                  "log_pl":True,
                  "self_normalize":False,
                  "random_sample":True,
-                 "num_points":2**20, 
+                 "num_points":2**3, 
                  }
 
     # Collect filenames
@@ -94,7 +127,7 @@ if __name__ == "__main__":
 
     # Get observations and initial condition
     iniPar = get_initpoints(init_filename, ic_flags)
-    e_data = get_data(experimental_data_filename, ic_flags, sim_flags, scale_f=1e-23)
+    e_data = get_data(experimental_data_filename, ic_flags, sim_flags, logger=logger, scale_f=1e-23)
 
     # Validate
     try:
@@ -104,10 +137,16 @@ if __name__ == "__main__":
         validate_IC(iniPar, L)
         validate_gpu_info(gpu_info)
         validate_params(num_params, unit_conversions, do_log, minX, maxX)
+    except AssertionError as e:
+        logger.error("Validation error")
+        logger.error(e)
+        stop(logger, handler, 1)
+        
+    try:
         connect_to_gpu(gpu_info, nthreads=128, sims_per_block=1)
     except Exception as e:
-        logging.error(e)
-        logging.error("Continuing with CPU fallback")
+        logging.warning(e)
+        logging.warning("Continuing with CPU fallback")
 
     if gpu_info.get('has_GPU', False):
         from pvSimPCR import pvSim
@@ -116,23 +155,24 @@ if __name__ == "__main__":
     else:
         from pvSim_fallback import pvSim_cpu_fallback
         model = pvSim_cpu_fallback
-    print("Starting simulations with the following parameters:")
+        
+    logger.info("Starting simulations with the following parameters:")
 
-    print("Lengths: {}".format(Length))
+    logger.info("Lengths: {}".format(Length))
     for i in range(num_params):
         if minX[i] == maxX[i]:
-            print("{}: {}".format(param_names[i], minX[i]))
+            logger.info("{}: {}".format(param_names[i], minX[i]))
 
         else:
-            print("{}: {} to {} {}".format(param_names[i], minX[i], maxX[i], "log" if do_log[i] else "linear"))
+            logger.info("{}: {} to {} {}".format(param_names[i], minX[i], maxX[i], "log" if do_log[i] else "linear"))
 
-    print("\nInitial condition - {}".format(init_filename))
-    print("\nExperimental data - {}".format(experimental_data_filename))
-    print("Output: {}".format(out_filename))
+    logger.info("\nInitial condition - {}".format(init_filename))
+    logger.info("\nExperimental data - {}".format(experimental_data_filename))
+    logger.info("Output: {}".format(out_filename))
 
-    print(ic_flags)
-    print(gpu_info)
-    print(sim_flags)
+    logger.info(ic_flags)
+    logger.info(gpu_info)
+    logger.info(sim_flags)
 
     minX *= unit_conversions
     maxX *= unit_conversions
@@ -141,7 +181,7 @@ if __name__ == "__main__":
     P    = None
     clock0 = perf_counter()
     N, P, X = bayes(model, N, P, minX, maxX, do_log, iniPar, simPar, e_data, sim_flags, gpu_info)
-    print("Bayesim took {} s".format(perf_counter() - clock0))
+    logger.info("Bayesim took {} s".format(perf_counter() - clock0))
 
     minX /= unit_conversions
     maxX /= unit_conversions
@@ -149,5 +189,6 @@ if __name__ == "__main__":
 
     clock0 = perf_counter()
     for i, of in enumerate(out_filename):
-        export(of, P[i], X)
-    print("Export took {}".format(perf_counter() - clock0))
+        export(of, P[i], X, logger=logger)
+    logger.info("Export took {}".format(perf_counter() - clock0))
+    stop(logger, handler, 0)
