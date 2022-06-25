@@ -101,10 +101,12 @@ def iterate(N, P, E, matPar, par, p, t):
     rate = matPar[:,4]
     sr0 = matPar[:,5]
     srL = matPar[:,6]
-    tauN = matPar[:,7]
-    tauP = matPar[:,8]
-    Lambda = matPar[:,9]
-    #N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda = matPar
+    CN = matPar[:,7]
+    CP = matPar[:,8]
+    tauN = matPar[:,9]
+    tauP = matPar[:,10]
+    Lambda = matPar[:,11]
+    #N0, P0, DN, DP, rate, sr0, srL, CN, CP, tauN, tauP, Lambda = matPar
     a0, a1, a2, a3, a4, a5, k, kp, ko, ko2, ko3, ko4, L, tol, MAX, TPB = par
     num_sims = len(N)
     TOL  = 10.0**(-tol)
@@ -141,7 +143,7 @@ def iterate(N, P, E, matPar, par, p, t):
         errP[y] = 0
 
     cuda.syncthreads()
-# Iterate outer loop to convergence
+    # Iterate outer loop to convergence
     for iters in range(MAX):                    # Up to MAX iterations
         for n in range(1+th, L, TPB):           # Solve for N
             for y in range(num_sims):
@@ -153,9 +155,10 @@ def iterate(N, P, E, matPar, par, p, t):
             for y in range(num_sims):
                 tp = Nk[n, y]*tauP[y] + Pk[n, y] * tauN[y]
                 np = Nk[n, y]*Pk[n, y] - N0[y]*P0[y]
-                ds = -rate[y]*Pk[n, y] - (Pk[n, y]*tp - tauP[y]*np)/tp**2
+                ds = -rate[y]*Pk[n, y] - (Pk[n, y]*tp - tauP[y]*np)/tp**2 - (CN[y]*Nk[n,y]*Pk[n,y] + CP[y]*Pk[n,y]**2 + CN[y]*np)
                 A1[n, y] = a0 - A0[n-1, y] - A2[(n+1) % L, y] - ds
-                bb[n, y] = -(rate[y] + 1/tp)*np - ds*Nk[n, y] - bN[n, y]
+                #bb[n, y] = -(rate[y] + 1/tp)*np - ds*Nk[n, y] - bN[n, y]
+                bb[n, y] = -(CN[y]*Nk[n,y] + CP[y]*Pk[n,y] + rate[y] + 1/tp)*np - ds*Nk[n, y] - bN[n, y]
         cuda.syncthreads()
 
         for y in range(th, num_sims, TPB):
@@ -181,9 +184,10 @@ def iterate(N, P, E, matPar, par, p, t):
             for y in range(num_sims):
                 np = Nk[n, y]*Pk[n, y] - N0[y]*P0[y]
                 tp = Nk[n, y]*tauP[y] + Pk[n, y]*tauN[y]
-                ds = -rate[y]*Nk[n, y] - (Nk[n, y]*tp - tauN[y]*np)/tp**2
+                ds = -rate[y]*Nk[n, y] - (Nk[n, y]*tp - tauN[y]*np)/tp**2 - (CP[y]*Nk[n,y]*Pk[n,y] + CN[y]*Nk[n,y]**2 + CP[y]*np)
                 A1[n, y] = a0 - A0[n-1, y] - A2[(n+1) % L, y] - ds
-                bb[n, y] = -(rate[y] + 1/tp)*np - ds*Pk[n, y] - bP[n, y]
+                #bb[n, y] = -(rate[y] + 1/tp)*np - ds*Pk[n, y] - bP[n, y]
+                bb[n, y] = -(CN[y]*Nk[y] + CP[y]*Pk[y] + rate[y] + 1/tp)*np - ds*Pk[n, y] - bP[n, y]
         cuda.syncthreads()
         for y in range(th, num_sims, TPB):
             ds0 = -sr0[y]*(Nk[ 0, y]**2 + N0[y]*P0[y])/(Nk[ 0, y]+Pk[ 0, y])**2
@@ -321,8 +325,9 @@ def pvSim(plI_main, plN_main, plP_main, plE_main, matPar, simPar, iniPar, TPB, B
 
     # Non dimensionalize variables
     dx3 = dx**3; dtdx = dt/dx; dtdx2 = dtdx/dx
+    dtdx6 = dt / (dx**6)
     matPar  = np.array(matPar)
-    scales  = np.array([dx3,dx3,dtdx2,dtdx2,dtdx2/dx,dtdx,dtdx,1/dt,1/dt,1/dx])
+    scales  = np.array([dx3,dx3,dtdx2,dtdx2,dtdx2/dx,dtdx,dtdx,dtdx6, dtdx6, 1/dt,1/dt,1/dx])
     matPar *= scales
 
     # Allocate arrays for each thread

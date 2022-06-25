@@ -60,6 +60,8 @@ def make_grid(N, P, num_exp, minX, maxX, do_log, sim_flags, nref=None, minP=None
             #X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
             X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
     P = np.zeros((num_exp, len(N)))                               # Likelihoods
+    
+    # FIXME: reference by name instead of index
     if OVERRIDE_EQUAL_MU:
         X[:,2] = X[:,3]
 

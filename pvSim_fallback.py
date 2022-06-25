@@ -15,7 +15,7 @@ q_C = 1.602e-19 # [C]
 kBT = .02569257  # [eV]
 lambda0 = 704.3
 
-def dydt2(t, y, m, dx, Sf, Sb, mu_n, mu_p, n0, p0, tauN, tauP, B, 
+def dydt2(t, y, m, dx, Sf, Sb, mu_n, mu_p, n0, p0, CN, CP, tauN, tauP, B, 
           eps):
     """Derivative function for drift-diffusion-decay carrier model."""
     ## Initialize arrays to store intermediate quantities that do not need to be iteratively solved
@@ -59,18 +59,19 @@ def dydt2(t, y, m, dx, Sf, Sb, mu_n, mu_p, n0, p0, tauN, tauP, B,
     ## Calculate recombination (consumption) terms
     rad_rec = B * (N * P - n0 * p0)
     non_rad_rec = (N * P - n0 * p0) / ((tauN * P) + (tauP * N))
-        
+    
+    auger = (CN * N + CP * P) * (N * P - n0 * p0) 
     ## Calculate dJn/dx
     dJz = (np.roll(Jn, -1)[:-1] - Jn[:-1]) / (dx)
 
     ## N(t) = N(t-1) + dt * (dN/dt) roughly
-    dNdt = ((1/q) * dJz - rad_rec - non_rad_rec)
+    dNdt = ((1/q) * dJz - rad_rec - non_rad_rec - auger)
 
     ## Calculate dJp/dx
     dJz = (np.roll(Jp, -1)[:-1] - Jp[:-1]) / (dx)
 
     ## P(t) = P(t-1) + dt * (dP/dt) roughly
-    dPdt = ((-1/q) * dJz - rad_rec - non_rad_rec)
+    dPdt = ((-1/q) * dJz - rad_rec - non_rad_rec - auger)
 
     ## Package results
     dydt = np.concatenate([dNdt, dPdt, dEdt], axis=None)
@@ -84,10 +85,10 @@ def pvSim_cpu_fallback(plI, matPar, simPar, init_dN):
     clock0 = time.perf_counter()
     
     for i, mp in enumerate(matPar):
-        n0, p0, DN, DP, B, Sf, Sb, tauN, tauP, lambda_, mag_offset = mp
+        n0, p0, DN, DP, B, Sf, Sb, CN, CP, tauN, tauP, lambda_, mag_offset = mp
         mu_n = DN / (kBT)
         mu_p = DP / (kBT)
-        args=(L, dx, Sf, Sb, mu_n, mu_p, n0, p0, 
+        args=(L, dx, Sf, Sb, mu_n, mu_p, n0, p0, CN, CP, 
                 tauN, tauP, B, (lambda_/lambda0)**-1)
         
         init_N = init_dN + n0

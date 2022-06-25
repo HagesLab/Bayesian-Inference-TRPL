@@ -21,13 +21,14 @@ from bayes_validate import connect_to_gpu
 
 
 lambda0 = 704.3                           # q^2/(eps0*k_B T=25C) [nm]
-param_names = ["n0", "p0", "mun", "mup", "B", "Sf", "Sb", "taun", "taup", "lambda", "mag_offset"]
+param_names = ["n0", "p0", "mun", "mup", "B", "Sf", "Sb", "CN", "CP", "taun", "taup", "lambda", "mag_offset"]
 
 # Convert from common units to [V, nm, ns]
 unit_conversions = np.array([(1e7)**-3,(1e7)**-3,
                              (1e7)**2/(1e9)*.02569257,(1e7)**2/(1e9)*.02569257,
                              (1e7)**3/(1e9),
                              (1e7)/(1e9),(1e7)/(1e9),
+                             (1e7)**6/(1e9),(1e7)**6/(1e9),
                              1,1,
                              lambda0, 1])
 num_params = len(param_names)
@@ -80,11 +81,11 @@ if __name__ == "__main__":
     simPar = [Length, Time, L, T, plT, pT, tol, MAX]
 
     # This code follows a strict order of parameters:
-    # matPar = [N0, P0, DN, DP, rate, sr0, srL, tauN, tauP, Lambda, mag_offset]
+    # matPar = [N0, P0, DN, DP, rate, sr0, srL, CN, CP, tauN, tauP, Lambda, mag_offset]
     # Set the parameter ranges/sample space
-    do_log = np.array([1,1,0,0,1,1,1,0,0,1,0])
-    minX = np.array([1e8, 1e14, 20, 20, 1e-11, 0.1, 0.1, 1, 1, 10**-1, 0])
-    maxX = np.array([1e8, 1e16, 20, 20, 1e-9, 1e2, 1e2, 1000, 2000, 10**-1, 0])
+    do_log = np.array([1,1,0,0,1,1,1,1, 1, 0,0,1,0])
+    minX = np.array([1e8, 1e14, 20, 20, 1e-11, 0.1, 0.1, 4.4e-29, 4.4e-29, 1, 1, 10**-1, 0])
+    maxX = np.array([1e8, 1e16, 20, 20, 1e-9, 1e2, 1e2, 4.4e-29, 4.4e-29, 1000, 2000, 10**-1, 0])
 
     # Other options
     # time_cutoff: Truncate observations with timestamps larger than time_cutoff.
@@ -96,7 +97,7 @@ if __name__ == "__main__":
 
     # sims_per_gpu: Number of simulations dispatched to GPU at a time. Adjust according to GPU mem limits.
     # num_gpus: Number of GPUs to attempt connecting to.
-    gpu_info = {"sims_per_gpu": 2 ** 10,    
+    gpu_info = {"sims_per_gpu": 2 ** 2,    
                 "num_gpus": 1}
 
 
@@ -113,7 +114,7 @@ if __name__ == "__main__":
                  "log_pl":True,
                  "self_normalize":False,
                  "random_sample":True,
-                 "num_points":2**17, 
+                 "num_points":2**3, 
                  }
 
     # Collect filenames
