@@ -26,6 +26,15 @@ class LikelihoodData():
         
         self.X = np.load(os.path.join(dname, f"{bname}_BAYRAN_X.npy"))
         self.LL = np.load(os.path.join(dname, f"{bname}_BAYRAN_P.npy"))
+        
+        self.filter_nan()
+        return
+    
+    def filter_nan(self):
+        where_not_nan = np.logical_not(np.isnan(self.LL))
+        print("Nan filter: kept {} of {}".format(np.sum(where_not_nan), len(self.LL)))
+        self.LL = self.LL[where_not_nan]
+        self.X = self.X[where_not_nan]
         return
     
     def pack_X_param_indexable(self):
@@ -152,8 +161,8 @@ def normalize(lnP):
     # without causing overflow
     # Key is only to add or subtract from lnP - that way any introduced factors cancel out
     # during normalize by sum(P)
-    lnP = np.exp(lnP - np.max(lnP) + 1000*np.log(2) - np.log(lnP.size))
-    lnP  /= np.sum(lnP)                                      # Normalize P's
+    lnP = np.exp(lnP - np.nanmax(lnP) + 1000*np.log(2) - np.log(lnP.size))
+    lnP  /= np.nansum(lnP)                                      # Normalize P's
     return lnP
 
 def w_sample_var(val, wts, ws):

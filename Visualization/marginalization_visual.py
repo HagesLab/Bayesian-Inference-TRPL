@@ -65,7 +65,7 @@ class TkGUI():
         
         ## TODO: These should go in a config file ##
         self.data.PARAM_ORDER = [r"$n_0$", r"$p_0$", r"$\mu_n$", r"$\mu_p$", 
-                       r"$k^*$", r"$S_F$", r"$S_B$", r"$\tau_n$", 
+                       r"$k^*$", r"$S_F$", r"$S_B$", r"$C_n$", r"$C_p$", r"$\tau_n$", 
                        r"$\tau_p$", r"$\lambda$", r"$m$", r"$\tau_{eff}$",
                        r"$\tau_{rad}$",r"$(S_F+S_B)$", r"$\mu\prime$", r"$\epsilon$", r"$\tau_n+\tau_p$"]
         
@@ -77,6 +77,7 @@ class TkGUI():
         self.plots.units = {r"$k^*$":r"cm$^{3}$ s$^{-1}$", r"$\mu_n$":r"cm$^{2}$ V$^{-1}$ s$^{-1}$", r"$\mu_p$":r"cm$^{2}$ V$^{-1}$ s$^{-1}$",
                           r"$S_F$":r"cm s$^{-1}$", r"$S_B$":r"cm $s^{-1}$", r"$n_0$":r"cm$^{-3}$", r"$p_0$":r"cm$^{-3}$", 
                           r"$\tau_n$":r"ns", r"$\tau_p$":r"ns",
+                          r"$C_n$":r"cm$^{6}$ s$^{-1}$",r"$C_p$":r"cm$^{6}$ s$^{-1}$",
                           r"$m$":"", r"$\epsilon$":"", r"$\tau_{eff}$":r"ns",
                           r"$\tau_{rad}$":r"ns", r"$(S_F+S_B)$":r"cm s$^{-1}$", r"$\mu\prime$":r"cm$^{2}$ V$^{-1}$ s$^{-1}$",
                           r"$\tau_n+\tau_p$":"ns"}
@@ -334,7 +335,7 @@ class TkGUI():
     def init_plot_options(self):
         self.bin_count = tk.StringVar(value=96)
         self.num_maxes = tk.StringVar(value=50)
-        self.c_value = tk.StringVar(value=(1/2000))
+        self.c_value = tk.StringVar(value=(1/2500))
         self.exclude_outside_limits = tk.IntVar(value=1)
         return
         
@@ -591,7 +592,7 @@ class TkGUI():
         print(tf)
         
         self.setup_plot2D(len(self.plots.enabled_params))
-        matplotlib.rcParams.update({'font.size': 8})
+        matplotlib.rcParams.update({'font.size': 12})
 
         #self.fig.suptitle(f"{key} tol=7 N={len(P)} T={tf}")
         

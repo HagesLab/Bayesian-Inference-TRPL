@@ -11,7 +11,10 @@ def t_rad(B, p0):
     # p0 [cm^-3]
     return 1 / (B*p0) * 10**9
 
-def LI_tau_eff(B, p0, tau_n, Sf, Sb, thickness, mu):
+def t_auger(CP, p0):
+    return 1 / (CP*p0**2) * 10**9
+
+def LI_tau_eff(B, p0, tau_n, Sf, Sb, CP, thickness, mu):
     # S [cm/s] -> [nm/ns]
     # B [cm^3 / s]
     # p0 [cm^-3]
@@ -23,7 +26,8 @@ def LI_tau_eff(B, p0, tau_n, Sf, Sb, thickness, mu):
     D = mu * kb / q * 10**14 / 10**9# [cm^2 / V s] * [eV] / [eV/V] = [cm^2/s] -> [nm^2/ns]
     tau_surf = (thickness / ((Sf+Sb)*0.01)) + (thickness**2 / (np.pi ** 2 * D))
     t_r = t_rad(B, p0)
-    return (t_r**-1 + tau_surf**-1 + tau_n**-1)**-1
+    t_aug = t_auger(CP, p0)
+    return (t_r**-1 + t_aug**-1 + tau_surf**-1 + tau_n**-1)**-1
 
 def s_eff(sf, sb):
     return sf+sb
@@ -33,3 +37,6 @@ def mu_eff(mu_n, mu_p):
 
 def epsilon(lamb):
     return lamb**-1
+
+if __name__ == "__main__":
+    print(LI_tau_eff(4.8e-11, 3e15, 511, 2, 2, 311, 20))
