@@ -187,7 +187,7 @@ def iterate(N, P, E, matPar, par, p, t):
                 ds = -rate[y]*Nk[n, y] - (Nk[n, y]*tp - tauN[y]*np)/tp**2 - (CP[y]*Nk[n,y]*Pk[n,y] + CN[y]*Nk[n,y]**2 + CP[y]*np)
                 A1[n, y] = a0 - A0[n-1, y] - A2[(n+1) % L, y] - ds
                 #bb[n, y] = -(rate[y] + 1/tp)*np - ds*Pk[n, y] - bP[n, y]
-                bb[n, y] = -(CN[y]*Nk[y] + CP[y]*Pk[y] + rate[y] + 1/tp)*np - ds*Pk[n, y] - bP[n, y]
+                bb[n, y] = -(CN[n]*Nk[n,y] + CP[y]*Pk[n,y] + rate[y] + 1/tp)*np - ds*Pk[n, y] - bP[n, y]
         cuda.syncthreads()
         for y in range(th, num_sims, TPB):
             ds0 = -sr0[y]*(Nk[ 0, y]**2 + N0[y]*P0[y])/(Nk[ 0, y]+Pk[ 0, y])**2
