@@ -88,8 +88,8 @@ if __name__ == "__main__":
     # maxX = np.array([1e8, 1e16, 20, 20, 1e-9, 1e2, 1e2, 4.4e-29, 4.4e-29, 1000, 2000, 10**-1, 0])
     
     # Tests with CN only
-    minX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 2, 2, 1e-30, 4.4e-29, 511, 871, 10**-1, 0])
-    maxX = np.array([1e8, 3e15, 20, 20, 4.8e-11, 2, 2, 1e-28, 4.4e-29, 511, 871, 10**-1, 0])
+    minX = np.array([1e8, 1e14, 0, 0, 1e-11, 0.1, 0.1, 1e-30, 1e-30, 1, 1, 10**-1, 0])
+    maxX = np.array([1e8, 1e16, 50, 50, 1e-9, 100, 100, 1e-28, 1e-28, 1000, 2000, 10**-1, 0])
 
     # Other options
     # time_cutoff: Truncate observations with timestamps larger than time_cutoff.
@@ -106,6 +106,7 @@ if __name__ == "__main__":
 
 
     # load_PL_from_file: Whether to import TRPL simulation data. Currently doesn't do anything.
+    # override_equal_auger: Constrain sampled C_p to equal sampled C_n.
     # override_equal_mu: Constrain sampled mu_n to equal sampled mu_p.
     # override_equal_s: Constrain sampled Sb to equal Sf.
     # "log_pl: Compare log10 of PL for likelihood rather than direct PL values.
@@ -113,22 +114,21 @@ if __name__ == "__main__":
     # random_sample: Draw random samples from uniform parameter space.
     # num_points: Number of random samples to draw.
     sim_flags = {"load_PL_from_file": False,
+                 "override_equal_auger": False,
                  "override_equal_mu":False,
                  "override_equal_s":False,
                  "log_pl":True,
                  "self_normalize":False,
                  "random_sample":True,
-                 "num_points":2**10, 
+                 "num_points":2**17, 
                  }
 
     # Collect filenames
     init_dir = r"C:\Users\cfai2\Documents\src\bayesian processing\input curves\Staubb_Simulated\bay_inputs"
     out_dir = r"C:\Users\cfai2\Documents\src\bayesian processing\input curves\Staubb_Simulated\bay_outputs"
     init_filename = os.path.join(init_dir, "staub_MAPI_power_input.csv")
-    experimental_data_filename = [os.path.join(init_dir, "staub_311nm_minsf.csv"),
-                                  os.path.join(init_dir, "staub_311nm_minsf_staubtimeres.csv"),]
-    out_filename = [os.path.join(out_dir, "TEST0"),
-                    os.path.join(out_dir, "TEST1"),]
+    experimental_data_filename = [os.path.join(init_dir, "staub_311nm_minsf_staubtimeres_withauger.csv"),]
+    out_filename = [os.path.join(out_dir, "CNTEST_4.4e-29"),]
 
     # Get observations and initial condition
     iniPar = get_initpoints(init_filename, ic_flags)

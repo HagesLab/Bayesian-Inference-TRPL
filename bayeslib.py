@@ -35,6 +35,7 @@ def make_grid(N, P, num_exp, minX, maxX, do_log, sim_flags, nref=None, minP=None
     """ Set up sampling grid - either random sample or (DEPRECATED) coarse grid sample """
     OVERRIDE_EQUAL_MU = sim_flags["override_equal_mu"]
     OVERRIDE_EQUAL_S = sim_flags["override_equal_s"]
+    OVERRIDE_EQUAL_AUGER = sim_flags["override_equal_auger"]
     RANDOM_SAMPLE = sim_flags["random_sample"]
     NUM_POINTS = sim_flags["num_points"]
 
@@ -67,6 +68,9 @@ def make_grid(N, P, num_exp, minX, maxX, do_log, sim_flags, nref=None, minP=None
 
     if OVERRIDE_EQUAL_S:
         X[:,6] = X[:,5]
+        
+    if OVERRIDE_EQUAL_AUGER:
+        X[:,8] = X[:,7]
     return N, P, X
 
 def almost_equal(x, x0, threshold=1e-10):
