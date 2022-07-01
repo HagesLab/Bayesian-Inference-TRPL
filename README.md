@@ -1,6 +1,5 @@
 # Bayesian-Inference-TRPL
-A Bayesian inference algorithm and script for the fitting of TRPL observations from absorbers to the carrier drift/diffusion/decay model described in *Minority Carriers in III-V Semiconductors: Physics and Applications* (Ahrenkiel and Lundstrom, 1993) and *Chalcogenide Photovoltaics: Physics, Technologies, and Thin Film Devices* (Scheer and Schock, 2011). See our *Adv. Energy Mater.* article\[under review\] for additional details.
-
+A Bayesian inference algorithm and script for the fitting of TRPL observations from absorbers to the carrier drift/diffusion/decay model described in *Minority Carriers in III-V Semiconductors: Physics and Applications* (Ahrenkiel and Lundstrom, 1993) and *Chalcogenide Photovoltaics: Physics, Technologies, and Thin Film Devices* (Scheer and Schock, 2011).
 ## File Overview
 * parallel_bayes_gpu.py - Entry script and configuration settings for the inference. Do `python parallel_bayes_gpu.py OBSERVATION_FILE EXCITATION_FILE OUTPUT_NAME [new|new+|load]` to start the show. 
 * bayeslib.py - Driver functions for generating random samples of the parameter space, delegating simulations to GPUs, and computing resultant likelihoods.
