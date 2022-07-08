@@ -103,7 +103,7 @@ def get_data(exp_files, ic_flags, sim_flags, logger=None, scale_f=1e-23):
             
     return all_e_data
 
-def get_initpoints(init_file, ic_flags, scale_f=1e-21):
+def get_initpoints(init_file, ic_flags, scale_f=1e-21, logger=None):
     """ Import initial excitation .csv files - see Examples/*_Excitations.csv """
     SELECT = ic_flags['select_obs_sets']
 
@@ -112,7 +112,12 @@ def get_initpoints(init_file, ic_flags, scale_f=1e-21):
         initpoints = []
         for row in ifstream:
             if len(row) == 0: continue
-            initpoints.append(row)
+            try:
+                initpoints.append(np.array(row, dtype=float))
+            except ValueError:
+                if logger is not None:
+                    logger.warning("Failed to read IE")
+                continue
         
     if SELECT is not None:
         initpoints = np.array(initpoints)[SELECT]
@@ -139,20 +144,20 @@ def export(out_filename, P, X, logger=None):
 
     return
 
-def save_raw_pl(out_filename, ic_num, blk, plI):
-    """ DEPRECATED - save direct output of TRPL simulation """
-    try:
-        np.save(os.path.join(out_filename, "plI{}_grp{}.npy".format(ic_num, blk), plI))
-        print("Saved plI of size ", plI.shape)
-    except Exception as e:
-        print("Warning: save failed\n", e)
+# def save_raw_pl(out_filename, ic_num, blk, plI):
+#     """ DEPRECATED - save direct output of TRPL simulation """
+#     try:
+#         np.save(os.path.join(out_filename, "plI{}_grp{}.npy".format(ic_num, blk), plI))
+#         print("Saved plI of size ", plI.shape)
+#     except Exception as e:
+#         print("Warning: save failed\n", e)
         
-def load_raw_pl(out_filename, ic_num, blk):
-    """ DEPRECATED - load direct output of TRPL simulation """
-    try:
-        plI = np.load(os.path.join(out_filename, "plI{}_grp{}.npy".format(ic_num, blk)))
-        print("Loaded plI of size ", plI.shape)
-    except Exception as e:
-        print("Error: load failed\n", e)
-        sys.exit()
-    return plI
+# def load_raw_pl(out_filename, ic_num, blk):
+#     """ DEPRECATED - load direct output of TRPL simulation """
+#     try:
+#         plI = np.load(os.path.join(out_filename, "plI{}_grp{}.npy".format(ic_num, blk)))
+#         print("Loaded plI of size ", plI.shape)
+#     except Exception as e:
+#         print("Error: load failed\n", e)
+#         sys.exit()
+#     return plI
