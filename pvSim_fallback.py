@@ -90,6 +90,12 @@ def pvSim_cpu_fallback(plI, matPar, simPar, init_dN):
         mu_p = DP / (kBT)
         args=(L, dx, Sf, Sb, mu_n, mu_p, n0, p0, CN, CP, 
                 tauN, tauP, B, (lambda_/lambda0)**-1)
+
+        teff = LI_tau_eff(B, p0, tauN, Sf, Sb, CP, Length, mu_n)
+        if teff < Time / 100:
+            hmax = 0.025
+        else:
+    	    hmax = 1
         
         init_N = init_dN + n0
         init_P = init_dN + p0
@@ -109,3 +115,37 @@ def pvSim_cpu_fallback(plI, matPar, simPar, init_dN):
     solver_time = time.perf_counter() - clock0
     
     return solver_time
+
+def t_rad(B, p0):
+    # B [nm^3 / ns]
+    # p0 [nm^-3]
+    if B == 0 or p0 == 0:
+        return np.inf
+    
+    else:
+        return 1 / (B*p0)
+
+def t_auger(CP, p0):
+    if CP == 0 or p0 == 0:
+        return np.inf
+    
+    else:
+        return 1 / (CP*p0**2)
+
+def LI_tau_eff(B, p0, tau_n, Sf, Sb, CP, thickness, mu):
+    # S [nm/ns]
+    # B [nm^3 / ns]
+    # p0 [nm^-3]
+    # tau_n [ns]
+    # thickness [nm]
+    kb = 0.0257 #[ev]
+    q = 1
+    
+    D = mu * kb / q # [nm^2/ns]
+    if Sf+Sb == 0 or D == 0:
+        tau_surf = np.inf
+    else:
+        tau_surf = (thickness / ((Sf+Sb))) + (thickness**2 / (np.pi ** 2 * D))
+    t_r = t_rad(B, p0)
+    t_aug = t_auger(CP, p0)
+    return (t_r**-1 + t_aug**-1 + tau_surf**-1 + tau_n**-1)**-1
