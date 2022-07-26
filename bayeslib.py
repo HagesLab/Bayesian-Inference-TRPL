@@ -44,14 +44,15 @@ def make_grid(N, P, num_exp, minX, maxX, do_log, sim_flags, nref=None, minP=None
         X = random_grid(minX, maxX, do_log, NUM_POINTS, do_grid=False, refs=refs)
 
     else:
-        raise NotImplementedError("Grid sample currently deprecated; set RANDOM_SAMPLE to true")
-        #if P is not None:
+        from Legacy.legacy import indexGrid, paramGrid, refineGrid
+        refs = [[NUM_POINTS if minX[i] != maxX[i] else 1 for i in range(len(minX))]]
+        nref = 0
         #    N   = N[np.where(np.sum(np.mean(P, axis=0), axis=1) > minP[nref])] # P < minP - avg over tfs, sum over mag
         N   = refineGrid(N, refs[nref])                      # Refine grid
         Np  = np.prod(refs[nref])                            # Params per set
-        print("ref level, N: ", nref, len(N))
+        #print("ref level, N: ", nref, len(N))
 
-        X = np.empty((len(N), len(refs[0])))
+        X = np.empty((len(N), len(minX)))
         
         # TODO: Determine block size from GPU info instead of refinement?
         # Np cannot be modified! indexGrid assumes a certain value of Np
@@ -59,7 +60,8 @@ def make_grid(N, P, num_exp, minX, maxX, do_log, sim_flags, nref=None, minP=None
             Nn  = N[n:n+Np]                                  # Cells block
             ind = indexGrid(Nn,  refs[0:nref+1])             # Get coordinates
             #X   = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
-            X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX) # Get params
+            X[n:n+Np] = paramGrid(ind, refs[0:nref+1], minX, maxX, do_log) # Get params
+
     P = np.zeros((num_exp, len(N)))                               # Likelihoods
     
     # FIXME: reference by name instead of index
@@ -155,7 +157,7 @@ def simulate(model, e_data, P, X, plI, plI_int, num_curves,
                         misc_time[gpu_id] += fastlog(plI[gpu_id], sys.float_info.min, TPB[0], num_SMs)
                     else:
                         clock0 = time.perf_counter()
-                        plI[gpu_id] = np.abs(plI[gpu_id] + sys.float_info.min)
+                        plI[gpu_id] = np.abs(plI[gpu_id]) + sys.float_info.min
                         plI[gpu_id] = np.log10(plI[gpu_id])
                         misc_time[gpu_id] += time.perf_counter() - clock0
             else:
@@ -225,22 +227,23 @@ def bayes(model, N, P, minX, maxX, do_log, init_params, sim_params, e_data, sim_
     plI = [None for i in range(num_gpus)]
     plI_int = [None for i in range(num_gpus)]
     
-    gpu_id = 0
+    import os
+    gpu_id = int(os.getenv('SLURM_ARRAY_TASK_ID'))
     simulate(model, e_data, P, X, plI, plI_int,
                                   num_curves,sim_params[gpu_id], init_params, sim_flags, gpu_info, gpu_id,
                                   solver_time, err_sq_time, misc_time, logger=logger)
-    # for gpu_id in range(num_gpus):
-    #     print("Starting thread {}".format(gpu_id))
-    #     thread = threading.Thread(target=simulate, args=(model, e_data, P, X, plI, plI_int,
-    #                               num_curves,sim_params[gpu_id], init_params, sim_flags, gpu_info, gpu_id,
-    #                               solver_time, err_sq_time, misc_time, logger=logger))
-    #     threads.append(thread)
-    #     thread.start()
+    #for gpu_id in range(num_gpus):
+    #    logger.info("Starting thread {}".format(gpu_id))
+    #    thread = threading.Thread(target=simulate, args=(model, e_data, P, X, plI, plI_int,
+    #                              num_curves,sim_params[gpu_id], init_params, sim_flags, gpu_info, gpu_id,
+    #                              solver_time, err_sq_time, misc_time, logger))
+    #    threads.append(thread)
+    #    thread.start()
 
-    # for gpu_id, thread in enumerate(threads):
-    #     print("Ending thread {}".format(gpu_id))
-    #     thread.join()
-    #     print("Thread {} closed".format(gpu_id))
+    #for gpu_id, thread in enumerate(threads):
+    #    logger.info("Ending thread {}".format(gpu_id))
+    #    thread.join()
+    #    logger.info("Thread {} closed".format(gpu_id))
 
     if logger is not None:
         logger.info("Total tEvol time: {}, avg {}".format(solver_time, np.mean(solver_time)))

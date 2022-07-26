@@ -28,7 +28,7 @@ def paramGrid(ind, refs, minX, maxX, do_log):          # Arrays of parameters
     pN  = np.prod(refs, axis=0)                # Scale for indexes
     X_lin   = minX + (maxX-minX)*(ind + 0.5)/pN    # Get params
     X_log = minX * (maxX/minX)**((ind + 0.5)/pN)
-    return X_lin * (1-do_log) + X_log * do_log
+    return np.where(np.isnan(X_log), X_lin * (1-do_log), X_lin * (1-do_log) + X_log * do_log)
 
 def refineGrid (N, ref):                       # Refine grid
     siz = np.prod(ref)                         # Size of refined block

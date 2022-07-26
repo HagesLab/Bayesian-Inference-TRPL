@@ -27,7 +27,7 @@ def validate_ic_flags(ic_flags):
 def validate_gpu_info(gpu_info):
     assert isinstance(gpu_info["num_gpus"], int), "invalid num_gpus"
     assert gpu_info["num_gpus"] > 0, "invalid num_gpus"
-    assert gpu_info["num_gpus"] <= 8, "too many gpus"
+    #assert gpu_info["num_gpus"] <= 8, "too many gpus"
 
     assert isinstance(gpu_info["sims_per_gpu"], int), "invalid sims per gpu"
     assert gpu_info["sims_per_gpu"] > 0, "invalid sims per gpu"
